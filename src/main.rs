@@ -8,7 +8,7 @@ use ggez::{graphics, graphics::Color};
 use ggez::{Context, GameResult};
 use rand::Rng;
 
-const GRID_SIZE: f32 = 3.;
+const GRID_SIZE: f32 = 6.;
 const CURVE_SIZE: f32 = GRID_SIZE / 2.;
 const ROTATION_MAX: f32 = PI * 2.;
 const ROT_SPEED: f32 = FRAC_PI_8 / 8.;
@@ -48,10 +48,10 @@ impl GameArena {
             x_half: size_x * 0.5,
             y_half: size_y * 0.5,
             center,
-            top: center.y - size_y * 0.5,
-            left: center.x - size_x * 0.5,
-            bottom: center.y + size_y * 0.5,
-            right: center.x + size_x * 0.5,
+            top: 0.,
+            left: 0.,
+            bottom: size_y,
+            right: size_x,
         }
     }
 }
@@ -258,6 +258,7 @@ fn main() -> GameResult {
     let cb = ggez::ContextBuilder::new("curve", "biblius");
     let (mut ctx, event_loop) = cb.build()?;
     ctx.gfx.set_window_title("curve");
+    ctx.gfx.set_drawable_size(1280., 720.).unwrap();
 
     let state = GameState::new(&mut ctx);
     event::run(ctx, event_loop, state);
