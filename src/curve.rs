@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::kurve::ArenaBounds;
 use crate::point::Line;
-use crate::{new_trail_countdown, ROT_SPEED, VELOCITY};
+use crate::{new_trail_countdown, INV_DURATION, ROT_SPEED, VELOCITY};
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Point2;
 use rand::Rng;
@@ -19,24 +19,30 @@ pub struct Curve {
     /// How fast the curve is moving
     pub velocity: f32,
 
+    /// The movement keycodes for this curve
     pub move_keys: MoveKeys,
 
     /// The current duration until the trail should be drawn
     pub trail_countdown: Duration,
 
-    /// When the last curve segment started
+    /// When the last curve segment started or ended, used in unison with
+    /// [trail_active][Self::trail_active]
     pub trail_ts: Instant,
 
+    /// Whether or not this curve should currently draw its trail
     pub trail_active: bool,
 
-    pub player_id: u8,
+    /// Index to the player array, i.e. who this player belongs to
+    pub player_id: usize,
 
     /// The curves for game logic
     pub lines: Vec<Line>,
+
+    pub alive: bool,
 }
 
 impl Curve {
-    pub fn new_random_pos(player_id: u8, bounds: ArenaBounds, mv_keys: MoveKeys) -> Self {
+    pub fn new_random_pos(player_id: usize, bounds: ArenaBounds, mv_keys: MoveKeys) -> Self {
         let mut rng = rand::thread_rng();
         let p_x: f32 = rng.gen_range(bounds.x_min..bounds.x_max);
         let p_y: f32 = rng.gen_range(bounds.y_min..bounds.y_max);
@@ -52,10 +58,12 @@ impl Curve {
             trail_countdown: new_trail_countdown(),
             trail_ts: std::time::Instant::now(),
             trail_active: true,
+
+            alive: true,
         }
     }
 
-    pub fn new(player_id: u8, pos: Point2<f32>, rot: f32, mv_keys: MoveKeys) -> Self {
+    pub fn new(player_id: usize, pos: Point2<f32>, rot: f32, mv_keys: MoveKeys) -> Self {
         Self {
             position: pos,
             rotation: rot,
@@ -67,6 +75,8 @@ impl Curve {
             trail_countdown: new_trail_countdown(),
             trail_ts: std::time::Instant::now(),
             trail_active: true,
+
+            alive: true,
         }
     }
 
@@ -87,6 +97,29 @@ impl Curve {
         Point2 {
             x: self.position.x + self.velocity * self.rotation.cos(),
             y: self.position.y + self.velocity * self.rotation.sin(),
+        }
+    }
+
+    pub fn tick_trail(&mut self) {
+        let now = std::time::Instant::now();
+
+        // Disable trail if countdown is done and invulnerability countdown
+        if now.duration_since(self.trail_ts) > self.trail_countdown {
+            self.trail_active = false;
+            self.trail_ts = now;
+        }
+
+        // Enable trail if countdown is done
+        if now.duration_since(self.trail_ts) > INV_DURATION && !self.trail_active {
+            self.trail_active = true;
+            self.trail_countdown = new_trail_countdown();
+            self.trail_ts = now;
+        }
+
+        if self.trail_active {
+            // Push the line to the actual self
+            let line = Line::interpolate(self.position, self.next_pos());
+            self.lines.push(line);
         }
     }
 }
