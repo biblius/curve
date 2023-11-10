@@ -1,7 +1,10 @@
 use ggez::mint::Point2;
 
 /// A line obtained from interpolating 2 points.
-pub struct Line(Vec<Point2<f32>>);
+#[derive(Debug, Clone)]
+pub struct Line {
+    points: Vec<Point2<f32>>,
+}
 
 impl Line {
     #[inline]
@@ -24,11 +27,11 @@ impl Line {
             i += 1.;
         }
 
-        Self(points)
+        Self { points }
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, Point2<f32>> {
-        self.0.iter()
+        self.points.iter()
     }
 }
 
@@ -38,7 +41,7 @@ impl IntoIterator for Line {
     type IntoIter = std::vec::IntoIter<Point2<f32>>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.points.into_iter()
     }
 }
 

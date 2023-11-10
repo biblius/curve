@@ -1,6 +1,9 @@
 use std::f32::consts::PI;
+use std::time::{Duration, Instant};
 
-use crate::{ROT_SPEED, VELOCITY};
+use crate::kurve::ArenaBounds;
+use crate::point::Line;
+use crate::{new_trail_countdown, ROT_SPEED, VELOCITY};
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Point2;
 use rand::Rng;
@@ -17,34 +20,53 @@ pub struct Curve {
     pub velocity: f32,
 
     pub move_keys: MoveKeys,
+
+    /// The current duration until the trail should be drawn
+    pub trail_countdown: Duration,
+
+    /// When the last curve segment started
+    pub trail_ts: Instant,
+
+    pub trail_active: bool,
+
+    pub player_id: u8,
+
+    /// The curves for game logic
+    pub lines: Vec<Line>,
 }
 
 impl Curve {
-    pub fn new_random_pos(
-        x_min: f32,
-        x_max: f32,
-        y_min: f32,
-        y_max: f32,
-        mv_keys: MoveKeys,
-    ) -> Self {
+    pub fn new_random_pos(player_id: u8, bounds: ArenaBounds, mv_keys: MoveKeys) -> Self {
         let mut rng = rand::thread_rng();
-        let p_x: f32 = rng.gen_range(x_min..x_max);
-        let p_y: f32 = rng.gen_range(y_min..y_max);
+        let p_x: f32 = rng.gen_range(bounds.x_min..bounds.x_max);
+        let p_y: f32 = rng.gen_range(bounds.y_min..bounds.y_max);
         let rot: f32 = rng.gen_range(0f32..2. * PI);
         Self {
             position: Point2 { x: p_x, y: p_y },
             rotation: rot,
             velocity: VELOCITY,
             move_keys: mv_keys,
+            player_id,
+            lines: vec![],
+
+            trail_countdown: new_trail_countdown(),
+            trail_ts: std::time::Instant::now(),
+            trail_active: true,
         }
     }
 
-    pub fn new(pos: Point2<f32>, rot: f32, mv_keys: MoveKeys) -> Self {
+    pub fn new(player_id: u8, pos: Point2<f32>, rot: f32, mv_keys: MoveKeys) -> Self {
         Self {
             position: pos,
             rotation: rot,
             velocity: VELOCITY,
             move_keys: mv_keys,
+            player_id,
+            lines: vec![],
+
+            trail_countdown: new_trail_countdown(),
+            trail_ts: std::time::Instant::now(),
+            trail_active: true,
         }
     }
 

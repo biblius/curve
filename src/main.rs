@@ -1,15 +1,19 @@
 use curve::{Curve, MoveKeys};
+use ggez::conf::WindowMode;
 use ggez::event::{self};
-use ggez::graphics::{DrawParam, InstanceArray};
+use ggez::graphics;
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Point2;
-use ggez::{graphics, graphics::Color};
+use ggez::winit::dpi::PhysicalSize;
 use ggez::{Context, GameResult};
+use kurve::{ArenaBounds, Kurve};
 use point::{BoundingBox, Line};
+use rand::Rng;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_8};
+use std::time::Duration;
 
 mod curve;
-mod game;
+mod kurve;
 mod point;
 
 const GRID_SIZE: f32 = 3.;
@@ -18,114 +22,86 @@ const CURVE_SIZE: f32 = GRID_SIZE * 0.5;
 const ROT_SPEED: f32 = FRAC_PI_8 * 0.1;
 const VELOCITY: f32 = 1.;
 
-/// Achtung die main game struct.
-struct Kurve {
-    /// Area width
-    size_x: f32,
+const ARENA_W_MOD: f32 = 0.8;
+const ARENA_H_MOD: f32 = 0.8;
 
-    /// Area height
-    size_y: f32,
+const TRAIL_INTERVAL_MIN: u64 = 2000;
+const TRAIL_INTERVAL_MAX: u64 = 4000;
 
-    /// The curves in the game
-    curves: Vec<Curve>,
+/// Curve invulnerability duration when it is not leaving the trail
+const INV_DURATION: Duration = Duration::from_millis(300);
 
-    /// A vec containing a flattened repr of all the lines' points.
-    /// Used to draw the curves.
-    trails: Vec<InstanceArray>,
-
-    /// The curves for game logic
-    lines: Vec<Line>,
+/// Get a random duration for counting down the segment skip in the curves
+pub fn new_trail_countdown() -> Duration {
+    let mut rng = rand::thread_rng();
+    let millis = rng.gen_range(TRAIL_INTERVAL_MIN..TRAIL_INTERVAL_MAX);
+    Duration::from_millis(millis)
 }
 
-impl Kurve {
-    pub fn new(size_x: f32, size_y: f32, curves: Vec<Curve>, trails: Vec<InstanceArray>) -> Self {
-        Kurve {
-            size_x,
-            size_y,
-            curves,
-            trails,
-            lines: Vec::new(),
-        }
-    }
-
-    #[inline]
-    pub fn center(&self) -> Point2<f32> {
-        Point2 {
-            x: self.size_x * 0.5,
-            y: self.size_y * 0.5,
-        }
-    }
-
-    pub fn update(&mut self, ctx: &mut Context) {
-        let mut new_lines = 0;
-        for i in 0..self.curves.len() {
-            // Append the trail
-            let curve = &mut self.curves[i];
-            let trail = &mut self.trails[i];
-
-            if ctx.keyboard.is_key_pressed(curve.move_keys.right) {
-                curve.rotate_right()
-            }
-
-            if ctx.keyboard.is_key_pressed(curve.move_keys.left) {
-                curve.rotate_left()
-            }
-
-            let line = Line::interpolate(curve.position, curve.next_pos());
-            for p in line.iter() {
-                trail.push((*p).into());
-            }
-
-            self.lines.push(line);
-            new_lines += 1;
-
-            curve.mv();
-        }
-
-        // Skip the newly added lines.
-        for line in self.lines[0..self.lines.len() - new_lines].iter() {
-            for curve in self.curves.iter_mut() {
-                let bbox = BoundingBox::new(curve.next_pos());
-                if check_line_collision(bbox, line)
-                    || check_border_collision(self.size_x, self.size_y, bbox)
-                {
-                    curve.velocity = 0.;
-                }
-            }
-        }
-    }
-}
-
-struct GameState {
+struct Game {
     kurve: Kurve,
+
+    last_window_size: PhysicalSize<u32>,
 }
 
-impl GameState {
+impl Game {
     pub fn new(ctx: &mut Context) -> Self {
         let (size_x, size_y) = ctx.gfx.drawable_size();
+
+        /*         let player1 = Curve::new(
+                   1,
+                   Point2 {
+                       x: 400. + 100.,
+                       y: 300.,
+                   },
+                   0.,
+                   MoveKeys {
+                       left: KeyCode::Q,
+                       right: KeyCode::W,
+                   },
+               );
+
+               let player2 = Curve::new(
+                   2,
+                   Point2 {
+                       x: 400. - 100.,
+                       y: 300.,
+                   },
+                   FRAC_PI_2,
+                   MoveKeys {
+                       left: KeyCode::Left,
+                       right: KeyCode::Down,
+                   },
+               );
+        */
+
+        let size = (size_x * ARENA_W_MOD, size_y * ARENA_H_MOD);
         let center = Point2 {
             x: size_x * 0.5,
             y: size_y * 0.5,
         };
 
-        let player1 = Curve::new(
-            Point2 {
-                x: center.x + 100.,
-                y: center.y,
-            },
-            0.,
+        let (x_min, x_max) = (center.x - size.0 * 0.5, center.x + size.0 * 0.5);
+        let (y_min, y_max) = (center.y - size.1 * 0.5, center.y + size.1 * 0.5);
+        let bounds = ArenaBounds {
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        };
+
+        let player1 = Curve::new_random_pos(
+            0,
+            bounds,
             MoveKeys {
                 left: KeyCode::Q,
                 right: KeyCode::W,
             },
         );
 
-        let player2 = Curve::new(
-            Point2 {
-                x: center.x - 100.,
-                y: center.y,
-            },
-            FRAC_PI_2,
+        let player2 = Curve::new_random_pos(
+            1,
+            bounds,
             MoveKeys {
                 left: KeyCode::Left,
                 right: KeyCode::Down,
@@ -133,14 +109,12 @@ impl GameState {
         );
 
         //Arena
-        let kurve = Kurve::new(
-            size_x,
-            size_y,
-            vec![player1, player2],
-            vec![InstanceArray::new(ctx, None), InstanceArray::new(ctx, None)],
-        );
+        let kurve = Kurve::new(size, center, vec![player1, player2], bounds);
 
-        Self { kurve }
+        Self {
+            kurve,
+            last_window_size: ctx.gfx.window().inner_size(),
+        }
     }
 }
 
@@ -153,21 +127,33 @@ pub fn check_line_collision(bbox: BoundingBox, line: &Line) -> bool {
             }
         }
     }
+
     false
 }
 
 #[inline]
-pub fn check_border_collision(x_max: f32, y_max: f32, bbox: BoundingBox) -> bool {
+pub fn check_border_collision(
+    x_min: f32,
+    x_max: f32,
+    y_min: f32,
+    y_max: f32,
+    bbox: BoundingBox,
+) -> bool {
     for point in bbox {
-        if point.x < 0. || point.x > x_max || point.y < 0. || point.y > y_max {
+        if point.x < x_min || point.x > x_max || point.y < y_min || point.y > y_max {
             return true;
         }
     }
+
     false
 }
 
-impl event::EventHandler for GameState {
+impl event::EventHandler for Game {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
+        if self.last_window_size != ctx.gfx.window().inner_size() {
+            let size = ctx.gfx.drawable_size();
+            self.kurve.resize(size);
+        }
         self.kurve.update(ctx);
 
         Ok(())
@@ -176,49 +162,7 @@ impl event::EventHandler for GameState {
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
         let mut canvas = graphics::Canvas::from_frame(ctx, None);
 
-        let arena_rect = graphics::Rect::new(
-            -self.kurve.size_x * 0.5,
-            -self.kurve.size_y * 0.5,
-            self.kurve.size_x,
-            self.kurve.size_y,
-        );
-
-        let arena_mesh = graphics::Mesh::new_rectangle(
-            ctx,
-            graphics::DrawMode::fill(),
-            arena_rect,
-            Color::BLUE,
-        )?;
-
-        let curve_mesh = graphics::Mesh::new_circle(
-            ctx,
-            graphics::DrawMode::fill(),
-            Point2 { x: 0., y: 0. },
-            CURVE_SIZE,
-            0.1,
-            Color::WHITE,
-        )?;
-
-        let draw_param = graphics::DrawParam::default().dest(self.kurve.center());
-        canvas.draw(&arena_mesh, draw_param);
-
-        for (i, curve) in self.kurve.curves.iter().enumerate() {
-            let trail = &self.kurve.trails[i];
-            canvas.draw_instanced_mesh(curve_mesh.clone(), trail, DrawParam::default());
-
-            draw_param.dest(curve.position);
-            canvas.draw(&curve_mesh, draw_param);
-
-            let c_rect =
-                graphics::Rect::new(-CURVE_SIZE, -CURVE_SIZE, CURVE_SIZE * 2., CURVE_SIZE * 2.);
-            let c_mesh =
-                graphics::Mesh::new_rectangle(ctx, graphics::DrawMode::fill(), c_rect, Color::RED)?;
-
-            let bbox = BoundingBox::new(curve.next_pos());
-            for bbox in bbox {
-                canvas.draw(&c_mesh, draw_param.dest(bbox));
-            }
-        }
+        self.kurve.draw(ctx, &mut canvas)?;
 
         canvas.finish(ctx)?;
 
@@ -230,11 +174,21 @@ pub fn main() -> GameResult {
     let cb = ggez::ContextBuilder::new("curve", "biblius");
     let (mut ctx, event_loop) = cb.build()?;
     ctx.gfx.set_window_title("curve");
-    for res in ctx.gfx.supported_resolutions() {
-        dbg!(res);
-    }
-    dbg!(ctx.gfx.drawable_size());
+    /*     let res = ctx
+        .gfx
+        .supported_resolutions()
+        .next()
+        .unwrap()
+        .to_logical(1.);
+    ctx.gfx
+        .set_mode(
+            WindowMode::default()
+                .dimensions(res.width, res.height)
+                .resizable(true),
+        )
+        .unwrap();
+    ctx.gfx.set_drawable_size(res.width, res.height).unwrap(); */
 
-    let state = GameState::new(&mut ctx);
+    let state = Game::new(&mut ctx);
     event::run(ctx, event_loop, state);
 }
