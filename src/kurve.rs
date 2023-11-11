@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::f32::consts::{FRAC_PI_8, PI};
 use std::time::Instant;
 
 use crate::point::Line;
@@ -61,7 +61,9 @@ impl Kurve {
             size,
             curves,
             bounds,
-            state: KurveState::Running,
+            state: KurveState::StartCountdown {
+                started: Instant::now(),
+            },
         }
     }
 
@@ -85,10 +87,15 @@ impl Kurve {
     }
 
     /// Tick the round countdown
-    fn tick_countdown(&mut self, started: Instant) {
+    fn tick_countdown(&mut self, ctx: &mut Context, started: Instant) {
+        for curve in self.curves.iter_mut() {
+            curve.rotate(ctx);
+        }
         let now = Instant::now();
         if now.duration_since(started) >= WINNER_GLOAT_DURATION {
-            self.reset_curves();
+            for curve in self.curves.iter_mut() {
+                curve.trail_ts = Instant::now();
+            }
             self.state = KurveState::Running;
         }
     }
@@ -166,15 +173,10 @@ impl Kurve {
         None
     }
 
+    #[inline]
     fn move_curves(&mut self, ctx: &mut Context) {
         for curve in self.curves.iter_mut() {
-            if ctx.keyboard.is_key_pressed(curve.move_keys.right) {
-                curve.rotate_right()
-            }
-
-            if ctx.keyboard.is_key_pressed(curve.move_keys.left) {
-                curve.rotate_left()
-            }
+            curve.rotate(ctx);
 
             curve.tick_trail();
 
@@ -218,7 +220,7 @@ impl Kurve {
         match self.state {
             KurveState::Running => return self.tick_running(ctx),
             KurveState::Preparation => return None, // TODO,
-            KurveState::StartCountdown { started } => self.tick_countdown(started),
+            KurveState::StartCountdown { started } => self.tick_countdown(ctx, started),
             KurveState::Winner { started } => self.tick_winner(ctx, started),
             KurveState::Paused => unreachable!(),
         }
@@ -226,19 +228,25 @@ impl Kurve {
         None
     }
 
-    pub fn draw_countdown(
+    /// Display the counter in the middle of the screen on countdown
+    fn draw_countdown_phase(
         &self,
         ctx: &mut Context,
         canvas: &mut Canvas,
         started: Instant,
     ) -> GameResult {
         let (x, y) = ctx.gfx.drawable_size();
+
+        // Draw the countdown
         let second = (WINNER_GLOAT_DURATION.saturating_sub(Instant::now().duration_since(started)))
             .as_secs()
             + 1;
+
         let mut text = graphics::Text::new(second.to_string());
         text.set_scale(PxScale::from(24.));
+
         let rect = text.dimensions(ctx).unwrap();
+
         canvas.draw(
             &text,
             DrawParam::default().dest(Point2 {
@@ -246,11 +254,43 @@ impl Kurve {
                 y: y * 0.5,
             }),
         );
+
+        // Draw the lines displaying rotations
+        for curve in self.curves.iter() {
+            let pos_point = curve.position;
+            let rot_point = curve.project_rotation();
+            let line =
+                graphics::Mesh::new_line(ctx, &[pos_point, rot_point], 1., Color::WHITE).unwrap();
+            let tip = graphics::Mesh::new_polygon(
+                ctx,
+                graphics::DrawMode::fill(),
+                &[
+                    Point2 {
+                        x: rot_point.x + 7. * (curve.rotation + PI - FRAC_PI_8 * 0.6).cos(),
+                        y: rot_point.y + 7. * (curve.rotation + PI - FRAC_PI_8 * 0.6).sin(),
+                    },
+                    Point2 {
+                        x: rot_point.x,
+                        y: rot_point.y,
+                    },
+                    Point2 {
+                        x: rot_point.x + 7. * (curve.rotation + PI + FRAC_PI_8 * 0.6).cos(),
+                        y: rot_point.y + 7. * (curve.rotation + PI + FRAC_PI_8 * 0.6).sin(),
+                    },
+                ],
+                Color::WHITE,
+            )?;
+            canvas.draw(&line, DrawParam::default());
+            canvas.draw(&tip, DrawParam::default());
+        }
         Ok(())
     }
 
+    fn draw_winner_phase(&self) {}
+
     pub fn draw(&self, ctx: &mut Context, canvas: &mut Canvas) -> GameResult {
         let (x, y) = ctx.gfx.drawable_size();
+
         let arena_rect = graphics::Rect::new(
             x * (1. - ARENA_W_MOD) * 0.5,
             y * (1. - ARENA_H_MOD) * 0.5,
@@ -288,10 +328,9 @@ impl Kurve {
                     acc
                 });
 
-            canvas.draw_instanced_mesh(curve_mesh.clone(), &trail, DrawParam::default());
+            canvas.draw_instanced_mesh(curve_mesh.clone(), &trail, draw_param);
 
-            draw_param.dest(curve.position);
-            canvas.draw(&curve_mesh, draw_param);
+            canvas.draw(&curve_mesh, draw_param.dest(curve.position));
 
             /*             let c_rect =
                 graphics::Rect::new(-CURVE_SIZE, -CURVE_SIZE, CURVE_SIZE * 2., CURVE_SIZE * 2.);
@@ -305,7 +344,11 @@ impl Kurve {
         }
 
         if let KurveState::StartCountdown { started } = self.state {
-            self.draw_countdown(ctx, canvas, started)?;
+            self.draw_countdown_phase(ctx, canvas, started)?;
+        }
+
+        if let KurveState::Winner { started } = self.state {
+            //            self.draw_winner_phase()
         }
 
         Ok(())

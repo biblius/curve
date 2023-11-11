@@ -6,6 +6,7 @@ use crate::point::Line;
 use crate::{new_trail_countdown, INV_DURATION, ROT_SPEED, VELOCITY};
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Point2;
+use ggez::Context;
 use rand::Rng;
 
 #[derive(Debug)]
@@ -80,23 +81,40 @@ impl Curve {
         }
     }
 
-    pub fn rotate_left(&mut self) {
-        self.rotation -= ROT_SPEED;
+    /// Checks whether a move key is pressed and rotates the curve accordingly
+    #[inline]
+    pub fn rotate(&mut self, ctx: &mut Context) {
+        if ctx.keyboard.is_key_pressed(self.move_keys.right) {
+            self.rotation += ROT_SPEED;
+        }
+
+        if ctx.keyboard.is_key_pressed(self.move_keys.left) {
+            self.rotation -= ROT_SPEED;
+        }
     }
 
-    pub fn rotate_right(&mut self) {
-        self.rotation += ROT_SPEED;
-    }
-
+    #[inline]
     pub fn mv(&mut self) {
         self.position.x += self.velocity * self.rotation.cos();
         self.position.y += self.velocity * self.rotation.sin();
     }
 
+    /// Return the curve's next position based on its velocity and rotation
+    #[inline]
     pub fn next_pos(&self) -> Point2<f32> {
         Point2 {
             x: self.position.x + self.velocity * self.rotation.cos(),
             y: self.position.y + self.velocity * self.rotation.sin(),
+        }
+    }
+
+    /// The same as `next_pos`, except uses a larger multiplier instead of velocity
+    /// to get the point to draw the line to during countdown
+    #[inline]
+    pub fn project_rotation(&self) -> Point2<f32> {
+        Point2 {
+            x: self.position.x + 20. * self.rotation.cos(),
+            y: self.position.y + 20. * self.rotation.sin(),
         }
     }
 
