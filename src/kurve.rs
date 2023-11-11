@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::point::Line;
 use crate::{curve::Curve, point::BoundingBox, ARENA_H_MOD, ARENA_W_MOD, CURVE_SIZE};
-use crate::{new_trail_countdown, VELOCITY, WINNER_GLOAT_DURATION};
+use crate::{new_trail_countdown, Player, VELOCITY, WINNER_GLOAT_DURATION};
 use ggez::graphics::{Drawable, PxScale};
 use ggez::input::keyboard::KeyCode;
 use ggez::{
@@ -36,6 +36,9 @@ pub enum KurveState {
     Winner {
         /// When this phase has started
         started: Instant,
+
+        /// The player index
+        name: String,
     },
 }
 
@@ -114,7 +117,7 @@ impl Kurve {
     }
 
     /// Process a running game's tick
-    fn tick_running(&mut self, ctx: &mut Context) -> Option<usize> {
+    fn tick_running(&mut self, ctx: &mut Context, players: &[Player]) -> Option<usize> {
         let len = self.curves.len();
 
         // Bitflags for collision
@@ -163,6 +166,7 @@ impl Kurve {
         if let Some(winner) = self.check_winner() {
             self.state = KurveState::Winner {
                 started: Instant::now(),
+                name: players[winner].name.clone(),
             };
             return Some(winner);
         }
@@ -208,7 +212,9 @@ impl Kurve {
 
     /// Update the game state and return the winner's ID, if any.
     /// The winner's ID indexes into the player vec.
-    pub fn update(&mut self, ctx: &mut Context) -> Option<usize> {
+    ///
+    /// Players is needed to display the name of the winner.
+    pub fn update(&mut self, ctx: &mut Context, players: &[Player]) -> Option<usize> {
         if ctx.keyboard.is_key_pressed(KeyCode::Space) {
             self.toggle_pause();
         }
@@ -218,10 +224,10 @@ impl Kurve {
         }
 
         match self.state {
-            KurveState::Running => return self.tick_running(ctx),
+            KurveState::Running => return self.tick_running(ctx, players),
             KurveState::Preparation => return None, // TODO,
             KurveState::StartCountdown { started } => self.tick_countdown(ctx, started),
-            KurveState::Winner { started } => self.tick_winner(ctx, started),
+            KurveState::Winner { started, .. } => self.tick_winner(ctx, started),
             KurveState::Paused => unreachable!(),
         }
 
@@ -286,7 +292,22 @@ impl Kurve {
         Ok(())
     }
 
-    fn draw_winner_phase(&self) {}
+    fn draw_winner_phase(&self, ctx: &mut Context, canvas: &mut Canvas, player_name: &str) {
+        let (x, y) = ctx.gfx.drawable_size();
+
+        let mut text = graphics::Text::new(format!("{player_name} wins!"));
+        text.set_scale(PxScale::from(24.));
+
+        let rect = text.dimensions(ctx).unwrap();
+
+        canvas.draw(
+            &text,
+            DrawParam::default().dest(Point2 {
+                x: x * 0.5 - rect.w * 0.5,
+                y: y * 0.5,
+            }),
+        );
+    }
 
     pub fn draw(&self, ctx: &mut Context, canvas: &mut Canvas) -> GameResult {
         let (x, y) = ctx.gfx.drawable_size();
@@ -347,8 +368,8 @@ impl Kurve {
             self.draw_countdown_phase(ctx, canvas, started)?;
         }
 
-        if let KurveState::Winner { started } = self.state {
-            //            self.draw_winner_phase()
+        if let KurveState::Winner { ref name, .. } = self.state {
+            self.draw_winner_phase(ctx, canvas, name)
         }
 
         Ok(())

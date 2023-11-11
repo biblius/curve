@@ -110,7 +110,7 @@ impl Game {
 
         let players = vec![player1, player2];
 
-        let player1 = Curve::new_random_pos(
+        let curve1 = Curve::new_random_pos(
             0,
             bounds,
             MoveKeys {
@@ -119,7 +119,7 @@ impl Game {
             },
         );
 
-        let player2 = Curve::new_random_pos(
+        let curve2 = Curve::new_random_pos(
             1,
             bounds,
             MoveKeys {
@@ -129,7 +129,7 @@ impl Game {
         );
 
         //Arena
-        let kurve = Kurve::new(size, vec![player1, player2], bounds);
+        let kurve = Kurve::new(size, vec![curve1, curve2], bounds);
 
         Self { kurve, players }
     }
@@ -137,7 +137,7 @@ impl Game {
 
 impl event::EventHandler for Game {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        if let Some(winner) = self.kurve.update(ctx) {
+        if let Some(winner) = self.kurve.update(ctx, &self.players) {
             self.players[winner].score += 1;
         }
 
