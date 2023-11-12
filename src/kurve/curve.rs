@@ -1,11 +1,13 @@
 use std::collections::VecDeque;
 use std::f32::consts::PI;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::time::{Duration, Instant};
 
+use super::point::Line;
 use crate::kurve::ArenaBounds;
-use crate::point::Line;
-use crate::{new_trail_countdown, CURVE_SIZE, INV_DURATION, ROT_SPEED, VELOCITY};
+use crate::{
+    display_key, INV_DURATION, ROT_SPEED, TRAIL_INTERVAL_MAX, TRAIL_INTERVAL_MIN, VELOCITY,
+};
 use ggez::graphics::Color;
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Point2;
@@ -117,11 +119,11 @@ impl Curve {
     /// Checks whether a move key is pressed and rotates the curve accordingly
     #[inline]
     pub fn rotate(&mut self, ctx: &mut Context) {
-        if ctx.keyboard.is_key_pressed(self.move_keys.right) {
+        if ctx.keyboard.is_key_pressed(self.move_keys.cw) {
             self.rotation += ROT_SPEED;
         }
 
-        if ctx.keyboard.is_key_pressed(self.move_keys.left) {
+        if ctx.keyboard.is_key_pressed(self.move_keys.ccw) {
             self.rotation -= ROT_SPEED;
         }
     }
@@ -178,15 +180,32 @@ impl Curve {
 
 #[derive(Debug, Clone, Copy)]
 pub struct MoveKeys {
-    pub left: KeyCode,
-    pub right: KeyCode,
+    pub cw: KeyCode,
+    pub ccw: KeyCode,
 }
 
 impl Default for MoveKeys {
     fn default() -> Self {
         Self {
-            left: KeyCode::Q,
-            right: KeyCode::W,
+            cw: KeyCode::Q,
+            ccw: KeyCode::W,
         }
     }
+}
+
+impl Display for MoveKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (l, r) = (
+            display_key(self.ccw).unwrap_or("???"),
+            display_key(self.cw).unwrap_or("???"),
+        );
+        write!(f, "{l}/{r}")
+    }
+}
+
+/// Get a random duration for counting down the segment skip in the curves
+pub fn new_trail_countdown() -> Duration {
+    let mut rng = rand::thread_rng();
+    let millis = rng.gen_range(TRAIL_INTERVAL_MIN..TRAIL_INTERVAL_MAX);
+    Duration::from_millis(millis)
 }

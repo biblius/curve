@@ -1,21 +1,32 @@
-use std::f32::consts::{FRAC_PI_8, PI};
-use std::time::{Duration, Instant};
-
-use crate::curve::MoveKeys;
-use crate::point::Line;
-use crate::{curve::Curve, point::BoundingBox, CURVE_SIZE};
-use crate::{key_to_str, new_trail_countdown, Player, SIZE_SMALL, VELOCITY, WINNER_GLOAT_DURATION};
+use crate::{SIZE_SMALL, VELOCITY, WINNER_GLOAT_DURATION};
+use curve::MoveKeys;
 use ggez::graphics::{Drawable, PxScale};
-use ggez::input::keyboard::{KeyCode, KeyMods};
+use ggez::input::keyboard::KeyCode;
 use ggez::GameError;
 use ggez::{
     graphics::{self, Canvas, Color, DrawParam, InstanceArray},
     mint::Point2,
     Context, GameResult,
 };
+use player::Player;
+use point::Line;
 use rand::distributions::uniform::SampleUniform;
 use rand::Rng;
+use std::f32::consts::{FRAC_PI_8, PI};
 use std::fmt::{Debug, Write};
+use std::time::Instant;
+use {curve::Curve, point::BoundingBox};
+
+use self::curve::new_trail_countdown;
+use self::menu::{
+    KurveMenu, KurveMenuItem, PlayerConfig, PlayerConfigFocus, PlayerKeyModifier,
+    PlayerNameModifier,
+};
+
+mod curve;
+mod menu;
+mod player;
+mod point;
 
 const COLORS: [Color; 5] = [
     Color::GREEN,
@@ -32,24 +43,24 @@ const COLORS: [Color; 5] = [
 
 const MOVE_KEYS: [MoveKeys; 5] = [
     MoveKeys {
-        left: KeyCode::PageUp,
-        right: KeyCode::PageDown,
+        ccw: KeyCode::PageUp,
+        cw: KeyCode::PageDown,
     },
     MoveKeys {
-        left: KeyCode::J,
-        right: KeyCode::K,
+        ccw: KeyCode::J,
+        cw: KeyCode::K,
     },
     MoveKeys {
-        left: KeyCode::V,
-        right: KeyCode::B,
+        ccw: KeyCode::V,
+        cw: KeyCode::B,
     },
     MoveKeys {
-        left: KeyCode::O,
-        right: KeyCode::P,
+        ccw: KeyCode::O,
+        cw: KeyCode::P,
     },
     MoveKeys {
-        left: KeyCode::Q,
-        right: KeyCode::W,
+        ccw: KeyCode::Q,
+        cw: KeyCode::W,
     },
 ];
 
@@ -58,9 +69,6 @@ const SETUP_KURVE_CENTER: (f32, f32) = (0.7, 0.5);
 
 /// Multipliers for the x and y axis used to position the menu during setup
 const SETUP_MENU_CENTER: (f32, f32) = (0.3, 0.3);
-
-/// To normalise the menu
-const SETUP_MENU_TICK: Duration = Duration::from_millis(60);
 
 /// Represents the current phase of the game
 #[derive(Debug)]
@@ -88,112 +96,6 @@ pub enum KurveState {
         /// The player index
         id: usize,
     },
-}
-
-pub struct KurveMenu {
-    items: Vec<KurveMenuItem>,
-    selected: usize,
-    colors: Vec<Color>,
-    keys: Vec<MoveKeys>,
-    active_mod: Option<Box<dyn ModifierElement>>,
-}
-
-impl Debug for KurveMenu {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("KurveMenu")
-            .field("items", &self.items)
-            .field("selected", &self.selected)
-            .field("colors", &self.colors)
-            .field("keys", &self.keys)
-            .finish()
-    }
-}
-
-#[derive(Debug)]
-pub struct FocusBuffer {
-    item_id: usize,
-    /// Current text buffer
-    buf: String,
-}
-
-impl ModifierElement for FocusBuffer {
-    fn apply(&self, kurve: &mut Kurve) {
-        let item = &mut kurve.menu.items[kurve.menu.selected];
-        let KurveMenuItem::PlayerCurveConfig(config) = item else {
-            panic!("string modifier being applied to unsupported item");
-        };
-        config.name = self.buf.clone();
-        kurve.players[config.id].name = config.name.clone();
-    }
-
-    fn update(&mut self, ctx: &mut Context) {
-        if ctx.keyboard.is_key_pressed(KeyCode::Back) {
-            self.buf.pop();
-            return;
-        }
-
-        key_to_str!(ctx, self);
-    }
-
-    fn target(&self) -> usize {
-        self.item_id
-    }
-}
-
-#[derive(Debug)]
-pub enum KurveMenuItem {
-    PlayerCurveConfig(PlayerConfig),
-    AddPlayer,
-    Start,
-}
-
-#[derive(Debug)]
-pub struct PlayerConfig {
-    /// The index into the players and curves vec
-    id: usize,
-    name: String,
-    color: Color,
-    keys: MoveKeys,
-    selected: PlayerConfigFocus,
-}
-
-#[derive(Debug)]
-enum PlayerConfigFocus {
-    Name,
-    Color,
-    Keys,
-}
-
-impl PlayerConfig {
-    /// Create a player curve pair from the config. Bounds are necessary for the spawned curve.
-    fn to_player_curve_pair(
-        &self,
-        ctx: &mut Context,
-        bounds: ArenaBounds,
-    ) -> Result<(Player, Curve), GameError> {
-        let player = Player::new(self.name.clone(), self.keys);
-
-        let mesh = graphics::Mesh::new_circle(
-            ctx,
-            graphics::DrawMode::fill(),
-            Point2 { x: 0., y: 0. },
-            CURVE_SIZE,
-            0.1,
-            self.color,
-        )?;
-
-        let curve = Curve::new_random_pos(self.id, bounds, player.move_keys, mesh, self.color);
-
-        Ok((player, curve))
-    }
-}
-
-trait ModifierElement {
-    fn apply(&self, kurve: &mut Kurve);
-
-    fn update(&mut self, ctx: &mut Context);
-
-    fn target(&self) -> usize;
 }
 
 /// Achtung die main game struct.
@@ -337,6 +239,8 @@ impl Kurve {
 
     /// Process the setup menu
     fn tick_setup_menu(&mut self, ctx: &mut Context) -> GameResult {
+        // Handle focused elements first
+
         if self.menu.active_mod.is_some() && ctx.keyboard.is_key_just_pressed(KeyCode::Escape) {
             self.menu.active_mod = None;
         }
@@ -353,6 +257,22 @@ impl Kurve {
             return Ok(());
         }
 
+        // Handle selected elements subcommand
+
+        if ctx.keyboard.is_key_just_pressed(KeyCode::Right) {
+            let item = &mut self.menu.items[self.menu.selected];
+            if let KurveMenuItem::PlayerCurveConfig(conf) = item {
+                conf.selected = conf.selected.next();
+            }
+        }
+
+        if ctx.keyboard.is_key_just_pressed(KeyCode::Left) {
+            let item = &mut self.menu.items[self.menu.selected];
+            if let KurveMenuItem::PlayerCurveConfig(conf) = item {
+                conf.selected = conf.selected.previous();
+            }
+        }
+
         // Handle Enter
 
         if ctx.keyboard.is_key_just_pressed(KeyCode::Return) {
@@ -360,12 +280,12 @@ impl Kurve {
             match item {
                 KurveMenuItem::PlayerCurveConfig(conf) => match conf.selected {
                     PlayerConfigFocus::Name => {
-                        self.menu.active_mod = Some(Box::new(FocusBuffer {
-                            item_id: self.menu.selected,
-                            buf: String::new(),
-                        }))
+                        self.menu.active_mod =
+                            Some(Box::new(PlayerNameModifier { buf: String::new() }))
                     }
-                    PlayerConfigFocus::Color => todo!(),
+                    PlayerConfigFocus::Color => {
+                        self.menu.active_mod = Some(Box::new(PlayerKeyModifier::new()))
+                    }
                     PlayerConfigFocus::Keys => todo!(),
                 },
                 KurveMenuItem::AddPlayer => {
@@ -403,6 +323,8 @@ impl Kurve {
                 }
             }
         }
+
+        // Handle up/down navigation
 
         if ctx.keyboard.is_key_just_pressed(KeyCode::Up) {
             if self.menu.selected == 0 {
@@ -632,6 +554,7 @@ impl Kurve {
 
         if let KurveState::Setup = self.state {
             self.draw_setup_menu(ctx, canvas)?;
+            return Ok(());
         }
 
         if let KurveState::StartCountdown { started } = self.state {
@@ -662,10 +585,12 @@ impl Kurve {
                     name,
                     color,
                     selected: sub_selected,
+                    keys,
                     ..
                 }) => {
                     let size = (600., 100.);
 
+                    // Full rect for item
                     let rect = graphics::Rect::new(
                         center.x - size.0 * 0.5,
                         center.y - size.1 * 0.5 + i as f32 * 100.,
@@ -673,28 +598,85 @@ impl Kurve {
                         size.1,
                     );
 
-                    let mut text = graphics::Text::new(name);
+                    // Player name
 
-                    text.set_scale(PxScale::from(24.));
-                    let text_dims = text.dimensions(ctx).unwrap();
-
+                    let mut name = graphics::Text::new(name);
+                    name.set_scale(PxScale::from(24.));
+                    let mut name_rect = name.dimensions(ctx).unwrap();
                     canvas.draw(
-                        &text,
+                        &name,
                         DrawParam::default().dest(Point2 {
                             x: rect.x + size.0 * 0.1,
-                            y: rect.y + size.1 * 0.5 - text_dims.h * 0.5,
+                            y: rect.y + size.1 * 0.5 - name_rect.h * 0.5,
                         }),
                     );
 
+                    // Player keys
+
+                    let mut keys = graphics::Text::new(keys.to_string());
+                    keys.set_scale(PxScale::from(24.));
+                    let mut keys_rect = keys.dimensions(ctx).unwrap();
+                    canvas.draw(
+                        &keys,
+                        DrawParam::default().dest(Point2 {
+                            x: rect.x + size.0 * 0.6,
+                            y: rect.y + size.1 * 0.5 - keys_rect.h * 0.5,
+                        }),
+                    );
+
+                    // Player color
+
+                    // If currently selected draw the selectors
+
                     if selected {
-                        let mesh = graphics::Mesh::new_rectangle(
+                        let border_mesh = graphics::Mesh::new_rectangle(
                             ctx,
                             graphics::DrawMode::stroke(2.),
                             rect,
                             *color,
                         )?;
 
-                        canvas.draw(&mesh, DrawParam::default());
+                        canvas.draw(&border_mesh, DrawParam::default());
+
+                        match sub_selected {
+                            PlayerConfigFocus::Name => {
+                                let adjust = (name_rect.w * 1.1 - name_rect.w) * 0.5;
+                                name_rect.w *= 1.1;
+                                name_rect.h *= 1.2;
+                                let inner_border_mesh = graphics::Mesh::new_rectangle(
+                                    ctx,
+                                    graphics::DrawMode::stroke(2.),
+                                    name_rect,
+                                    *color,
+                                )?;
+                                canvas.draw(
+                                    &inner_border_mesh,
+                                    DrawParam::default().dest(Point2 {
+                                        x: rect.x + size.0 * 0.1 - adjust,
+                                        y: rect.y + size.1 * 0.5 - name_rect.h * 0.5,
+                                    }),
+                                );
+                            }
+                            PlayerConfigFocus::Color => {
+                                let adjust = (keys_rect.w * 1.1 - keys_rect.w) * 0.5;
+                                keys_rect.w *= 1.1;
+                                keys_rect.h *= 1.2;
+                                let inner_border_mesh = graphics::Mesh::new_rectangle(
+                                    ctx,
+                                    graphics::DrawMode::stroke(2.),
+                                    keys_rect,
+                                    *color,
+                                )?;
+                                canvas.draw(
+                                    &inner_border_mesh,
+                                    DrawParam::default().dest(Point2 {
+                                        x: rect.x + size.0 * 0.6 - adjust,
+                                        y: rect.y + size.1 * 0.5 - keys_rect.h * 0.5,
+                                    }),
+                                );
+                            }
+                            PlayerConfigFocus::Keys => todo!(),
+                        }
                     }
                 }
                 KurveMenuItem::AddPlayer => {
@@ -764,6 +746,10 @@ impl Kurve {
                     }
                 }
             }
+        }
+
+        if let Some(ref modif) = self.menu.active_mod {
+            modif.draw(ctx, canvas)
         }
 
         Ok(())
