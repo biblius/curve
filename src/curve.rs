@@ -1,16 +1,21 @@
+use std::collections::VecDeque;
 use std::f32::consts::PI;
+use std::fmt::Debug;
 use std::time::{Duration, Instant};
 
 use crate::kurve::ArenaBounds;
 use crate::point::Line;
-use crate::{new_trail_countdown, INV_DURATION, ROT_SPEED, VELOCITY};
+use crate::{new_trail_countdown, CURVE_SIZE, INV_DURATION, ROT_SPEED, VELOCITY};
+use ggez::graphics::Color;
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Point2;
-use ggez::Context;
+use ggez::{graphics, Context};
 use rand::Rng;
 
-#[derive(Debug)]
 pub struct Curve {
+    /// Index to the player array, i.e. who this curve belongs to
+    pub player_id: usize,
+
     /// Where the curve is located
     pub position: Point2<f32>,
 
@@ -33,45 +38,73 @@ pub struct Curve {
     /// Whether or not this curve should currently draw its trail
     pub trail_active: bool,
 
-    /// Index to the player array, i.e. who this player belongs to
-    pub player_id: usize,
-
     /// The curves for game logic
-    pub lines: Vec<Line>,
+    pub lines: VecDeque<Line>,
 
     pub alive: bool,
+
+    pub mesh: graphics::Mesh,
+
+    pub color: Color,
+}
+
+impl Debug for Curve {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Curve")
+            .field("player_id", &self.player_id)
+            .field("position", &self.position)
+            .field("rotation", &self.rotation)
+            .field("velocity", &self.velocity)
+            .field("move_keys", &self.move_keys)
+            .field("trail_countdown", &self.trail_countdown)
+            .field("trail_ts", &self.trail_ts)
+            .field("trail_active", &self.trail_active)
+            .field("alive", &self.alive)
+            .field("color", &self.color)
+            .finish()
+    }
 }
 
 impl Curve {
-    pub fn new_random_pos(player_id: usize, bounds: ArenaBounds, mv_keys: MoveKeys) -> Self {
+    pub fn new_random_pos(
+        player_id: usize,
+        bounds: ArenaBounds,
+        mv_keys: MoveKeys,
+        mesh: graphics::Mesh,
+        color: Color,
+    ) -> Self {
         let mut rng = rand::thread_rng();
         let p_x: f32 = rng.gen_range(bounds.x_min..bounds.x_max);
         let p_y: f32 = rng.gen_range(bounds.y_min..bounds.y_max);
         let rot: f32 = rng.gen_range(0f32..2. * PI);
+
         Self {
             position: Point2 { x: p_x, y: p_y },
             rotation: rot,
             velocity: VELOCITY,
             move_keys: mv_keys,
             player_id,
-            lines: vec![],
+            lines: VecDeque::new(),
 
             trail_countdown: new_trail_countdown(),
             trail_ts: std::time::Instant::now(),
             trail_active: true,
 
             alive: true,
+
+            mesh,
+            color,
         }
     }
 
-    pub fn new(player_id: usize, pos: Point2<f32>, rot: f32, mv_keys: MoveKeys) -> Self {
+    /*     pub fn new(player_id: usize, pos: Point2<f32>, rot: f32, mv_keys: MoveKeys) -> Self {
         Self {
             position: pos,
             rotation: rot,
             velocity: VELOCITY,
             move_keys: mv_keys,
             player_id,
-            lines: vec![],
+            lines: VecDeque::new(),
 
             trail_countdown: new_trail_countdown(),
             trail_ts: std::time::Instant::now(),
@@ -79,7 +112,7 @@ impl Curve {
 
             alive: true,
         }
-    }
+    } */
 
     /// Checks whether a move key is pressed and rotates the curve accordingly
     #[inline]
@@ -118,6 +151,7 @@ impl Curve {
         }
     }
 
+    /// Process the curve's trail and append a line to its lines if the trail is active
     pub fn tick_trail(&mut self) {
         let now = std::time::Instant::now();
 
@@ -137,13 +171,22 @@ impl Curve {
         if self.trail_active {
             // Push the line to the actual self
             let line = Line::interpolate(self.position, self.next_pos());
-            self.lines.push(line);
+            self.lines.push_back(line);
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct MoveKeys {
     pub left: KeyCode,
     pub right: KeyCode,
+}
+
+impl Default for MoveKeys {
+    fn default() -> Self {
+        Self {
+            left: KeyCode::Q,
+            right: KeyCode::W,
+        }
+    }
 }

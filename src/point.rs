@@ -93,6 +93,14 @@ impl BoundingBox {
     pub fn iter(&self) -> std::slice::Iter<'_, Point2<f32>> {
         self.0.iter()
     }
+
+    pub fn xs(&self) -> [f32; 9] {
+        self.0.map(|p| p.x)
+    }
+
+    pub fn ys(&self) -> [f32; 9] {
+        self.0.map(|p| p.y)
+    }
 }
 
 impl IntoIterator for BoundingBox {
