@@ -26,6 +26,8 @@ pub struct KurveMenu {
     pub active_mod: Option<Box<dyn ModifierElement>>,
 }
 
+impl KurveMenu {}
+
 impl Debug for KurveMenu {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KurveMenu")
@@ -410,7 +412,7 @@ impl ModifierElement for PlayerColorModifier {
         let size = (50., 50.);
 
         let rect = graphics::Rect::new(
-            center.x + size.0 * 0.5,
+            center.x - size.0 * 0.5,
             center.y - size.1 * 0.5,
             size.0,
             size.1,

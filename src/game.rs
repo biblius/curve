@@ -2,7 +2,7 @@ use crate::kurve::Kurve;
 use crate::menu::{MainMenu, MainMenuItem};
 use ggez::event::{self};
 use ggez::graphics::{self, Color};
-use ggez::input::keyboard::KeyCode;
+use ggez::input::keyboard::{KeyCode, KeyInput};
 use ggez::{Context, GameError, GameResult};
 use std::fmt::Debug;
 
@@ -36,7 +36,7 @@ impl event::EventHandler for Game {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         match self.state {
             GameState::MainMenu => {
-                if !ctx.keyboard.is_key_pressed(KeyCode::Return) {
+                if !ctx.keyboard.is_key_just_pressed(KeyCode::Return) {
                     return Ok(());
                 }
 
@@ -62,6 +62,18 @@ impl event::EventHandler for Game {
 
         canvas.finish(ctx)?;
 
+        Ok(())
+    }
+
+    fn key_down_event(
+        &mut self,
+        ctx: &mut Context,
+        input: KeyInput,
+        _repeated: bool,
+    ) -> Result<(), GameError> {
+        if input.keycode == Some(KeyCode::Escape) && matches!(self.state, GameState::MainMenu) {
+            ctx.request_quit();
+        }
         Ok(())
     }
 }

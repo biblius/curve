@@ -130,17 +130,17 @@ impl Curve {
     }
 
     #[inline]
-    pub fn mv(&mut self) {
-        self.position.x += self.velocity * self.rotation.cos();
-        self.position.y += self.velocity * self.rotation.sin();
+    pub fn mv(&mut self, delta: f32) {
+        self.position.x += self.velocity * delta * self.rotation.cos();
+        self.position.y += self.velocity * delta * self.rotation.sin();
     }
 
     /// Return the curve's next position based on its velocity and rotation
     #[inline]
-    pub fn next_pos(&self) -> Point2<f32> {
+    pub fn next_pos(&self, delta: f32) -> Point2<f32> {
         Point2 {
-            x: self.position.x + self.velocity * self.rotation.cos(),
-            y: self.position.y + self.velocity * self.rotation.sin(),
+            x: self.position.x + self.velocity * delta * self.rotation.cos(),
+            y: self.position.y + self.velocity * delta * self.rotation.sin(),
         }
     }
 
@@ -155,7 +155,7 @@ impl Curve {
     }
 
     /// Process the curve's trail and append a line to its lines if the trail is active
-    pub fn tick_trail(&mut self) {
+    pub fn tick_trail(&mut self, delta: f32) {
         let now = std::time::Instant::now();
 
         // Disable trail if countdown is done and invulnerability countdown
@@ -173,7 +173,7 @@ impl Curve {
 
         if self.trail_active {
             // Push the line to the actual self
-            let line = Line::interpolate(self.position, self.next_pos());
+            let line = Line::interpolate(self.position, self.next_pos(delta));
             self.lines.push_back(line);
         }
     }

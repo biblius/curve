@@ -192,14 +192,14 @@ impl Kurve {
         }
     }
 
-    fn tick_winner(&mut self, ctx: &mut Context, started: Instant) {
+    fn tick_winner(&mut self, delta: f32, ctx: &mut Context, started: Instant) {
         let now = Instant::now();
 
         // Process movement
         for curve in self.curves.iter_mut() {
             curve.rotate(ctx);
-            curve.tick_trail();
-            curve.mv();
+            curve.tick_trail(delta);
+            curve.mv(delta);
         }
 
         if now.duration_since(started) >= WINNER_GLOAT_DURATION {
@@ -320,7 +320,9 @@ impl Kurve {
 
                     self.menu
                         .items
-                        .insert(idx, KurveMenuItem::PlayerCurveConfig(config))
+                        .insert(idx, KurveMenuItem::PlayerCurveConfig(config));
+
+                    self.menu.selected += 1;
                 }
                 KurveMenuItem::Start => {
                     let size = ctx.gfx.drawable_size();
@@ -351,10 +353,10 @@ impl Kurve {
     }
 
     /// Process the setup stagin area
-    fn tick_setup_curves(&mut self, ctx: &mut Context) {
+    fn tick_setup_curves(&mut self, ctx: &mut Context, delta: f32) {
         // Calculate wall collisions
         for curve in self.curves.iter_mut() {
-            let bbox = BoundingBox::new(curve.next_pos());
+            let bbox = BoundingBox::new(curve.next_pos(delta));
             if let Some(collision) =
                 check_border_axis_collision(self.bounds.x_min, self.bounds.x_max, bbox.xs())
             {
@@ -383,9 +385,9 @@ impl Kurve {
 
             curve.rotate(ctx);
 
-            curve.tick_trail();
+            curve.tick_trail(delta);
 
-            curve.mv();
+            curve.mv(delta);
 
             if curve.lines.len() > 20 {
                 curve.lines.pop_front();
@@ -394,7 +396,7 @@ impl Kurve {
     }
 
     /// Process a running game's tick
-    fn tick_running(&mut self, ctx: &mut Context) -> Option<usize> {
+    fn tick_running(&mut self, ctx: &mut Context, delta: f32) -> Option<usize> {
         // Bitflags for collision
         let mut collisions = 0u8;
 
@@ -404,7 +406,7 @@ impl Kurve {
                 continue;
             }
 
-            let bbox = BoundingBox::new(curve.next_pos());
+            let bbox = BoundingBox::new(curve.next_pos(delta));
 
             if check_border_collision(
                 self.bounds.x_min,
@@ -420,9 +422,9 @@ impl Kurve {
             for (j, curve) in self.curves.iter().enumerate() {
                 let lines = &curve.lines;
 
-                // Skip the last line of the current curve due to self collision
+                // Skip the last few lines of the current curve due to self collision
                 let line_count = if i == j {
-                    lines.len().saturating_sub(1)
+                    lines.len().saturating_sub(3)
                 } else {
                     lines.len()
                 };
@@ -456,9 +458,9 @@ impl Kurve {
         for curve in self.curves.iter_mut() {
             curve.rotate(ctx);
 
-            curve.tick_trail();
+            curve.tick_trail(delta);
 
-            curve.mv();
+            curve.mv(delta);
         }
 
         None
@@ -488,17 +490,19 @@ impl Kurve {
 
     /// Update the game state
     pub fn update(&mut self, ctx: &mut Context) -> GameResult {
-        if ctx.keyboard.is_key_pressed(KeyCode::Space) {
+        if ctx.keyboard.is_key_just_pressed(KeyCode::Space) {
             self.toggle_pause();
         }
+
+        let delta = ctx.time.delta().as_secs_f32();
 
         match self.state {
             KurveState::Setup => {
                 self.tick_setup_menu(ctx)?;
-                self.tick_setup_curves(ctx);
+                self.tick_setup_curves(ctx, delta);
             }
             KurveState::Running => {
-                if let Some(winner) = self.tick_running(ctx) {
+                if let Some(winner) = self.tick_running(ctx, delta) {
                     self.state = KurveState::Winner {
                         started: Instant::now(),
                         id: winner,
@@ -507,18 +511,20 @@ impl Kurve {
                 }
             }
             KurveState::StartCountdown { started } => self.tick_countdown(ctx, started),
-            KurveState::Winner { started, .. } => self.tick_winner(ctx, started),
+            KurveState::Winner { started, .. } => self.tick_winner(delta, ctx, started),
             KurveState::Paused => {}
         }
 
         Ok(())
     }
 
+    /// Should only be called when we are certain that the selected item in the menu is
+    /// a player config. Called in modifiers.
     pub fn extract_cfg_player_curve(&mut self) -> (&mut PlayerConfig, &mut Player, &mut Curve) {
         let item = &mut self.menu.items[self.menu.selected];
 
         let KurveMenuItem::PlayerCurveConfig(config) = item else {
-            panic!("string modifier being applied to unsupported item");
+            panic!("modifier being applied to unsupported item");
         };
 
         let player = &mut self.players[config.id];
@@ -611,12 +617,13 @@ impl Kurve {
                     keys,
                     ..
                 }) => {
-                    let size = (600., 100.);
+                    let size = (x * 0.25, y * 0.05);
 
                     // Full rect for item
+
                     let rect = graphics::Rect::new(
                         center.x - size.0 * 0.5,
-                        center.y - size.1 * 0.5 + i as f32 * 100.,
+                        y * 0.25 + i as f32 * 75.,
                         size.0,
                         size.1,
                     );
@@ -665,7 +672,7 @@ impl Kurve {
 
                     canvas.draw(&color_mesh, DrawParam::default());
 
-                    // If currently selected draw the selectors
+                    // If currently selected draw the select boxes
 
                     if selected {
                         let border_mesh = graphics::Mesh::new_rectangle(
@@ -736,11 +743,11 @@ impl Kurve {
                     }
                 }
                 KurveMenuItem::AddPlayer => {
-                    let size = (50., 50.);
+                    let size = (x * 0.05, y * 0.03);
 
                     let rect = graphics::Rect::new(
                         center.x - size.0 * 0.5,
-                        center.y - size.1 * 0.5 + i as f32 * 100.,
+                        y - size.1 * 0.5 - y * 0.30,
                         size.0,
                         size.1,
                     );
@@ -790,11 +797,11 @@ impl Kurve {
                     }
                 }
                 KurveMenuItem::Start => {
-                    let size = (200., 50.);
+                    let size = (x * 0.1, y * 0.03);
 
                     let rect = graphics::Rect::new(
                         center.x - size.0 * 0.5,
-                        center.y - size.1 * 0.5 + i as f32 * 100.,
+                        y - size.1 * 0.5 - y * 0.25,
                         size.0,
                         size.1,
                     );
