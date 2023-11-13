@@ -19,8 +19,8 @@ use {curve::Curve, point::BoundingBox};
 
 use self::curve::new_trail_countdown;
 use self::menu::{
-    KurveMenu, KurveMenuItem, PlayerConfig, PlayerConfigFocus, PlayerKeyModifier,
-    PlayerNameModifier,
+    KurveMenu, KurveMenuItem, PlayerColorModifier, PlayerConfig, PlayerConfigFocus,
+    PlayerKeyModifier, PlayerNameModifier,
 };
 
 mod curve;
@@ -247,7 +247,7 @@ impl Kurve {
 
         if self.menu.active_mod.is_some() && ctx.keyboard.is_key_just_pressed(KeyCode::Return) {
             let focus = self.menu.active_mod.take().unwrap();
-            focus.apply(self);
+            focus.apply(self, ctx)?;
             return Ok(());
         }
 
@@ -284,11 +284,20 @@ impl Kurve {
                             Some(Box::new(PlayerNameModifier { buf: String::new() }))
                     }
                     PlayerConfigFocus::Color => {
+                        if !self.menu.colors.is_empty() {
+                            self.menu.active_mod =
+                                Some(Box::new(PlayerColorModifier::new(self.menu.colors.clone())))
+                        }
+                    }
+                    PlayerConfigFocus::Keys => {
                         self.menu.active_mod = Some(Box::new(PlayerKeyModifier::new()))
                     }
-                    PlayerConfigFocus::Keys => todo!(),
                 },
                 KurveMenuItem::AddPlayer => {
+                    if self.menu.colors.is_empty() {
+                        return Ok(());
+                    }
+
                     let id = self.players.len();
 
                     let config = PlayerConfig {
@@ -504,6 +513,19 @@ impl Kurve {
 
         Ok(())
     }
+
+    pub fn extract_cfg_player_curve(&mut self) -> (&mut PlayerConfig, &mut Player, &mut Curve) {
+        let item = &mut self.menu.items[self.menu.selected];
+
+        let KurveMenuItem::PlayerCurveConfig(config) = item else {
+            panic!("string modifier being applied to unsupported item");
+        };
+
+        let player = &mut self.players[config.id];
+        let curve = &mut self.curves[config.id];
+
+        (config, player, curve)
+    }
 }
 
 /// Drawing logic impls
@@ -572,6 +594,7 @@ impl Kurve {
 
     pub fn draw_setup_menu(&self, ctx: &mut Context, canvas: &mut Canvas) -> GameResult {
         let (x, y) = ctx.gfx.drawable_size();
+
         let center = Point2 {
             x: x * SETUP_MENU_CENTER.0,
             y: y * SETUP_MENU_CENTER.1,
@@ -619,12 +642,28 @@ impl Kurve {
                     canvas.draw(
                         &keys,
                         DrawParam::default().dest(Point2 {
-                            x: rect.x + size.0 * 0.6,
+                            x: rect.x + size.0 * 0.5 - keys_rect.w * 0.5,
                             y: rect.y + size.1 * 0.5 - keys_rect.h * 0.5,
                         }),
                     );
 
                     // Player color
+
+                    let mut color_rect = graphics::Rect::new(
+                        rect.x + rect.w * 0.8,
+                        rect.y + rect.h * 0.25,
+                        rect.h * 0.5,
+                        rect.h * 0.5,
+                    );
+
+                    let color_mesh = graphics::Mesh::new_rectangle(
+                        ctx,
+                        graphics::DrawMode::fill(),
+                        color_rect,
+                        *color,
+                    )?;
+
+                    canvas.draw(&color_mesh, DrawParam::default());
 
                     // If currently selected draw the selectors
 
@@ -658,6 +697,24 @@ impl Kurve {
                                 );
                             }
                             PlayerConfigFocus::Color => {
+                                let adjust_x = (color_rect.w * 1.2 - color_rect.w) * 0.5;
+                                let adjust_y = (color_rect.h * 1.2 - color_rect.h) * 0.5;
+                                color_rect.w *= 1.2;
+                                color_rect.x -= adjust_x;
+                                color_rect.h *= 1.2;
+                                color_rect.y -= adjust_y;
+                                let inner_border_mesh = graphics::Mesh::new_rectangle(
+                                    ctx,
+                                    graphics::DrawMode::stroke(2.),
+                                    color_rect,
+                                    *color,
+                                )?;
+                                canvas.draw(
+                                    &inner_border_mesh,
+                                    DrawParam::default(), // Rect pos is already set
+                                );
+                            }
+                            PlayerConfigFocus::Keys => {
                                 let adjust = (keys_rect.w * 1.1 - keys_rect.w) * 0.5;
                                 keys_rect.w *= 1.1;
                                 keys_rect.h *= 1.2;
@@ -670,12 +727,11 @@ impl Kurve {
                                 canvas.draw(
                                     &inner_border_mesh,
                                     DrawParam::default().dest(Point2 {
-                                        x: rect.x + size.0 * 0.6 - adjust,
+                                        x: rect.x + size.0 * 0.5 - keys_rect.w * 0.5 - adjust,
                                         y: rect.y + size.1 * 0.5 - keys_rect.h * 0.5,
                                     }),
                                 );
                             }
-                            PlayerConfigFocus::Keys => todo!(),
                         }
                     }
                 }
@@ -691,6 +747,18 @@ impl Kurve {
 
                     let mut text = graphics::Text::new("+");
                     text.set_scale(PxScale::from(24.));
+                    text.fragments_mut().iter_mut().for_each(|frag| {
+                        frag.color = Some(if self.menu.colors.is_empty() {
+                            Color {
+                                r: 0.5,
+                                g: 0.5,
+                                b: 0.5,
+                                a: 0.8,
+                            }
+                        } else {
+                            Color::WHITE
+                        })
+                    });
                     let text_dims = text.dimensions(ctx).unwrap();
 
                     canvas.draw(
@@ -706,7 +774,16 @@ impl Kurve {
                             ctx,
                             graphics::DrawMode::stroke(2.),
                             rect,
-                            Color::WHITE,
+                            if self.menu.colors.is_empty() {
+                                Color {
+                                    r: 0.5,
+                                    g: 0.5,
+                                    b: 0.5,
+                                    a: 0.8,
+                                }
+                            } else {
+                                Color::WHITE
+                            },
                         )?;
 
                         canvas.draw(&mesh, DrawParam::default());

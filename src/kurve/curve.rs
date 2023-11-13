@@ -6,12 +6,13 @@ use std::time::{Duration, Instant};
 use super::point::Line;
 use crate::kurve::ArenaBounds;
 use crate::{
-    display_key, INV_DURATION, ROT_SPEED, TRAIL_INTERVAL_MAX, TRAIL_INTERVAL_MIN, VELOCITY,
+    display_key, CURVE_SIZE, INV_DURATION, ROT_SPEED, TRAIL_INTERVAL_MAX, TRAIL_INTERVAL_MIN,
+    VELOCITY,
 };
 use ggez::graphics::Color;
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Point2;
-use ggez::{graphics, Context};
+use ggez::{graphics, Context, GameError};
 use rand::Rng;
 
 pub struct Curve {
@@ -175,6 +176,17 @@ impl Curve {
             let line = Line::interpolate(self.position, self.next_pos());
             self.lines.push_back(line);
         }
+    }
+
+    pub fn create_mesh(ctx: &mut Context, color: Color) -> Result<graphics::Mesh, GameError> {
+        graphics::Mesh::new_circle(
+            ctx,
+            graphics::DrawMode::fill(),
+            Point2 { x: 0., y: 0. },
+            CURVE_SIZE,
+            0.1,
+            color,
+        )
     }
 }
 

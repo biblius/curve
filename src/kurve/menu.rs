@@ -1,6 +1,7 @@
 use super::curve::{Curve, MoveKeys};
 use super::{player::Player, ArenaBounds, Kurve, SETUP_MENU_CENTER};
-use crate::{display_key, key_to_str, CURVE_SIZE};
+use crate::{display_key, key_to_str};
+use ggez::GameResult;
 use ggez::{
     graphics::{self, Canvas, Color, DrawParam, Drawable, PxScale},
     input::keyboard::KeyCode,
@@ -10,7 +11,7 @@ use ggez::{
 use std::fmt::Debug;
 
 pub trait ModifierElement {
-    fn apply(&self, kurve: &mut Kurve);
+    fn apply(&self, kurve: &mut Kurve, ctx: &mut Context) -> GameResult;
 
     fn update(&mut self, ctx: &mut Context);
 
@@ -54,6 +55,18 @@ pub struct PlayerConfig {
 }
 
 impl PlayerConfig {
+    pub fn apply(&self, ctx: &mut Context, player: &mut Player, curve: &mut Curve) -> GameResult {
+        let Self {
+            name, color, keys, ..
+        } = self;
+
+        player.name = name.clone();
+        player.move_keys = *keys;
+        curve.color = *color;
+        curve.mesh = Curve::create_mesh(ctx, *color)?;
+        Ok(())
+    }
+
     /// Create a player curve pair from the config. Bounds are necessary for the spawned curve.
     pub fn to_player_curve_pair(
         &self,
@@ -62,14 +75,7 @@ impl PlayerConfig {
     ) -> Result<(Player, Curve), GameError> {
         let player = Player::new(self.name.clone(), self.keys);
 
-        let mesh = graphics::Mesh::new_circle(
-            ctx,
-            graphics::DrawMode::fill(),
-            Point2 { x: 0., y: 0. },
-            CURVE_SIZE,
-            0.1,
-            self.color,
-        )?;
+        let mesh = Curve::create_mesh(ctx, self.color)?;
 
         let curve = Curve::new_random_pos(self.id, bounds, player.move_keys, mesh, self.color);
 
@@ -87,17 +93,17 @@ pub enum PlayerConfigFocus {
 impl PlayerConfigFocus {
     pub fn next(&self) -> Self {
         match self {
-            Self::Name => Self::Color,
-            Self::Color => Self::Keys,
-            Self::Keys => Self::Name,
+            Self::Name => Self::Keys,
+            Self::Keys => Self::Color,
+            Self::Color => Self::Name,
         }
     }
 
     pub fn previous(&self) -> Self {
         match self {
-            Self::Name => Self::Keys,
-            Self::Color => Self::Name,
-            Self::Keys => Self::Color,
+            Self::Name => Self::Color,
+            Self::Keys => Self::Name,
+            Self::Color => Self::Keys,
         }
     }
 }
@@ -109,13 +115,11 @@ pub struct PlayerNameModifier {
 }
 
 impl ModifierElement for PlayerNameModifier {
-    fn apply(&self, kurve: &mut Kurve) {
-        let item = &mut kurve.menu.items[kurve.menu.selected];
-        let KurveMenuItem::PlayerCurveConfig(config) = item else {
-            panic!("string modifier being applied to unsupported item");
-        };
+    fn apply(&self, kurve: &mut Kurve, ctx: &mut Context) -> GameResult {
+        let (config, player, curve) = kurve.extract_cfg_player_curve();
         config.name = self.buf.clone();
-        kurve.players[config.id].name = config.name.clone();
+        config.apply(ctx, player, curve)?;
+        Ok(())
     }
 
     fn update(&mut self, ctx: &mut Context) {
@@ -133,7 +137,7 @@ impl ModifierElement for PlayerNameModifier {
         let (x, y) = ctx.gfx.drawable_size();
         let center = Point2 {
             x: x * SETUP_MENU_CENTER.0,
-            y: y * SETUP_MENU_CENTER.1 + 600.,
+            y: y * SETUP_MENU_CENTER.1 + 650.,
         };
 
         let size = (300., 50.);
@@ -200,14 +204,11 @@ impl PlayerKeyModifier {
 }
 
 impl ModifierElement for PlayerKeyModifier {
-    fn apply(&self, kurve: &mut Kurve) {
-        let item = &mut kurve.menu.items[kurve.menu.selected];
-        let KurveMenuItem::PlayerCurveConfig(config) = item else {
-            panic!("string modifier being applied to unsupported item");
-        };
-
+    fn apply(&self, kurve: &mut Kurve, ctx: &mut Context) -> GameResult {
+        let (config, player, curve) = kurve.extract_cfg_player_curve();
         config.keys = (*self).into();
-        kurve.players[config.id].move_keys = config.keys;
+        config.apply(ctx, player, curve)?;
+        Ok(())
     }
 
     fn update(&mut self, ctx: &mut Context) {
@@ -237,7 +238,7 @@ impl ModifierElement for PlayerKeyModifier {
         let (x, y) = ctx.gfx.drawable_size();
         let center = Point2 {
             x: x * SETUP_MENU_CENTER.0,
-            y: y * SETUP_MENU_CENTER.1 + 600.,
+            y: y * SETUP_MENU_CENTER.1 + 650.,
         };
 
         let size = (50., 50.);
@@ -245,7 +246,7 @@ impl ModifierElement for PlayerKeyModifier {
         // Left key
 
         let rect1 = graphics::Rect::new(
-            center.x - size.0 * 0.5,
+            center.x - size.0 * 1.5,
             center.y - size.1 * 0.5,
             size.0,
             size.1,
@@ -262,7 +263,7 @@ impl ModifierElement for PlayerKeyModifier {
         // Right key
 
         let rect2 = graphics::Rect::new(
-            center.x + size.0 + size.0 * 0.5,
+            center.x + size.0 * 0.5,
             center.y - size.1 * 0.5,
             size.0,
             size.1,
@@ -276,10 +277,15 @@ impl ModifierElement for PlayerKeyModifier {
         )
         .unwrap();
 
-        // The description
-        let mut banner = graphics::Text::new("Enter CW / CCW");
-        banner.set_scale(PxScale::from(18.));
-        let banner_dims = banner.dimensions(ctx).unwrap();
+        // The descriptions
+
+        let mut ccw_banner = graphics::Text::new("CCW");
+        ccw_banner.set_scale(PxScale::from(18.));
+        let ccw_banner_dims = ccw_banner.dimensions(ctx).unwrap();
+
+        let mut cw_banner = graphics::Text::new("CW");
+        cw_banner.set_scale(PxScale::from(18.));
+        let cw_banner_dims = cw_banner.dimensions(ctx).unwrap();
 
         // The input keys
 
@@ -292,29 +298,50 @@ impl ModifierElement for PlayerKeyModifier {
         let ccw_dims = key_ccw.dimensions(ctx).unwrap();
 
         canvas.draw(
-            &banner,
+            &ccw_banner,
             DrawParam::default().dest(Point2 {
-                x: rect1.x - banner_dims.w * 0.5,
-                y: rect1.y - banner_dims.h,
+                x: rect1.x + rect1.w * 0.5 - ccw_banner_dims.w * 0.5,
+                y: rect1.y - ccw_banner_dims.h,
+            }),
+        );
+
+        canvas.draw(
+            &cw_banner,
+            DrawParam::default().dest(Point2 {
+                x: rect2.x + rect2.w * 0.5 - cw_banner_dims.w * 0.5,
+                y: rect2.y - cw_banner_dims.h,
             }),
         );
 
         canvas.draw(&mesh1, DrawParam::default());
         canvas.draw(&mesh2, DrawParam::default());
 
+        let mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::stroke(1.),
+            match self.dir {
+                RotationDirection::Cw => rect2,
+                RotationDirection::Ccw => rect1,
+            },
+            Color::from_rgb(30, 30, 30),
+        )
+        .unwrap();
+
+        canvas.draw(&mesh, DrawParam::default());
+
         canvas.draw(
             &key_ccw,
             DrawParam::default().dest(Point2 {
-                x: rect1.x + ccw_dims.w * 0.5,
-                y: rect1.y - ccw_dims.h * 0.5,
+                x: rect1.x + rect1.w * 0.5 - ccw_dims.w * 0.5,
+                y: rect1.y + rect1.h * 0.5 - ccw_dims.h * 0.5,
             }),
         );
 
         canvas.draw(
             &key_cw,
             DrawParam::default().dest(Point2 {
-                x: rect2.x + cw_dims.w * 0.5,
-                y: rect2.y - cw_dims.h * 0.5,
+                x: rect2.x + rect2.w * 0.5 - cw_dims.w * 0.5,
+                y: rect2.y + rect2.h * 0.5 - cw_dims.h * 0.5,
             }),
         );
     }
@@ -326,6 +353,78 @@ impl From<PlayerKeyModifier> for MoveKeys {
             cw: value.key_cw,
             ccw: value.key_ccw,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct PlayerColorModifier {
+    colors: Vec<Color>,
+    selected: usize,
+}
+
+impl PlayerColorModifier {
+    pub fn new(colors: Vec<Color>) -> Self {
+        Self {
+            colors,
+            selected: 0,
+        }
+    }
+}
+
+impl ModifierElement for PlayerColorModifier {
+    fn apply(&self, kurve: &mut Kurve, ctx: &mut Context) -> GameResult {
+        let (config, player, curve) = kurve.extract_cfg_player_curve();
+        let current = curve.color;
+
+        config.color = self.colors[self.selected];
+        config.apply(ctx, player, curve)?;
+
+        if let Some(idx) = kurve.menu.colors.iter().position(|c| *c == current) {
+            kurve.menu.colors.remove(idx);
+            kurve.menu.colors.insert(idx, current);
+        }
+
+        Ok(())
+    }
+
+    fn update(&mut self, ctx: &mut Context) {
+        if ctx.keyboard.is_key_just_pressed(KeyCode::Left) {
+            if self.selected == 0 {
+                self.selected = self.colors.len() - 1;
+            } else {
+                self.selected -= 1;
+            }
+        }
+        if ctx.keyboard.is_key_just_pressed(KeyCode::Right) {
+            self.selected = (self.selected + 1) % self.colors.len();
+        }
+    }
+
+    fn draw(&self, ctx: &mut Context, canvas: &mut Canvas) {
+        let (x, y) = ctx.gfx.drawable_size();
+        let center = Point2 {
+            x: x * SETUP_MENU_CENTER.0,
+            y: y * SETUP_MENU_CENTER.1 + 650.,
+        };
+
+        let size = (50., 50.);
+
+        let rect = graphics::Rect::new(
+            center.x + size.0 * 0.5,
+            center.y - size.1 * 0.5,
+            size.0,
+            size.1,
+        );
+
+        let mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::fill(),
+            rect,
+            self.colors[self.selected],
+        )
+        .unwrap();
+
+        canvas.draw(&mesh, DrawParam::default());
     }
 }
 
