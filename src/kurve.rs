@@ -18,10 +18,7 @@ use std::time::Instant;
 use {curve::Curve, point::BoundingBox};
 
 use self::curve::new_trail_countdown;
-use self::menu::{
-    KurveMenu, KurveMenuItem, PlayerColorModifier, PlayerConfig, PlayerConfigFocus,
-    PlayerKeyModifier, PlayerNameModifier,
-};
+use self::menu::{KurveMenu, KurveMenuItem, PlayerConfig, PlayerConfigFocus};
 
 mod curve;
 mod menu;
@@ -69,6 +66,8 @@ const SETUP_KURVE_CENTER: (f32, f32) = (0.7, 0.5);
 
 /// Multipliers for the x and y axis used to position the menu during setup
 const SETUP_MENU_CENTER: (f32, f32) = (0.3, 0.3);
+
+const PAUSE_MENU_CENTER: (f32, f32) = (0.5, 0.5);
 
 /// Represents the current phase of the game
 #[derive(Debug)]
@@ -150,8 +149,8 @@ impl Kurve {
             SIZE_SMALL,
         );
 
-        let (player1, curve1) = config1.to_player_curve_pair(ctx, bounds)?;
-        let (player2, curve2) = config2.to_player_curve_pair(ctx, bounds)?;
+        let (player1, curve1) = config1.to_player_curve_pair(ctx, bounds, true, VELOCITY)?;
+        let (player2, curve2) = config2.to_player_curve_pair(ctx, bounds, true, VELOCITY)?;
 
         Ok(Self {
             bounds,
@@ -173,23 +172,116 @@ impl Kurve {
         })
     }
 
-    /// Add a player to the game and return their index
-    fn add_player(&mut self, player: Player, curve: Curve) {
-        self.players.push(player);
-        self.curves.push(curve);
-    }
-
-    fn set_bounds(&mut self, bounds: ArenaBounds) {
-        self.bounds = bounds;
-    }
-
-    #[inline]
-    fn toggle_pause(&mut self) {
-        match self.state {
-            KurveState::Running => self.state = KurveState::Paused,
-            KurveState::Paused => self.state = KurveState::Running,
-            _ => {}
+    /// Update the game state
+    pub fn update(&mut self, ctx: &mut Context) -> GameResult {
+        if ctx.keyboard.is_key_just_pressed(KeyCode::Space) {
+            self.toggle_pause();
         }
+
+        let delta = ctx.time.delta().as_secs_f32();
+
+        match self.state {
+            KurveState::Setup => {
+                self.tick_setup_menu(ctx)?;
+                self.tick_setup_curves(ctx, delta);
+            }
+            KurveState::Running => {
+                if let Some(winner) = self.tick_running(ctx, delta) {
+                    self.state = KurveState::Winner {
+                        started: Instant::now(),
+                        id: winner,
+                    };
+                    self.players[winner].score += 1;
+                }
+            }
+            KurveState::StartCountdown { started } => self.tick_countdown(ctx, started),
+            KurveState::Winner { started, .. } => self.tick_winner(delta, ctx, started),
+            KurveState::Paused => {
+                self.tick_setup_menu(ctx)?;
+                self.tick_pause(ctx);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn tick_pause(&mut self, ctx: &mut Context) {
+        if ctx.keyboard.is_key_just_pressed(KeyCode::Escape) {
+            self.reset_curves();
+            self.set_setup_bounds(ctx.gfx.drawable_size());
+            self.state = KurveState::Setup;
+        }
+    }
+
+    /// Process a running game's tick
+    fn tick_running(&mut self, ctx: &mut Context, delta: f32) -> Option<usize> {
+        // Bitflags for collision
+        let mut collisions = 0u8;
+
+        // Calculate collisions
+        for (i, curve) in self.curves.iter().enumerate() {
+            if !curve.alive {
+                continue;
+            }
+
+            let bbox = BoundingBox::new(curve.next_pos(delta));
+
+            if check_border_collision(
+                self.bounds.x_min,
+                self.bounds.x_max,
+                self.bounds.y_min,
+                self.bounds.y_max,
+                bbox,
+            ) {
+                collisions |= 1 << i;
+                continue;
+            }
+
+            for (j, curve) in self.curves.iter().enumerate() {
+                let lines = &curve.lines;
+
+                // Skip the last few lines of the current curve due to self collision
+                let line_count = if i == j {
+                    lines.len().saturating_sub(10)
+                } else {
+                    lines.len()
+                };
+
+                for (_, line) in lines
+                    .iter()
+                    .enumerate()
+                    .take_while(|(i, _)| *i < line_count)
+                {
+                    if check_line_collision(bbox, line) {
+                        collisions |= 1 << i;
+                    }
+                }
+            }
+        }
+
+        // Apply collisions
+        for (i, curve) in self.curves.iter_mut().enumerate() {
+            if collisions >> i == 1 {
+                curve.velocity = 0.;
+                curve.alive = false;
+            }
+        }
+
+        // Check for winners
+        if let Some(winner) = self.check_winner() {
+            return Some(winner);
+        }
+
+        // Process movement
+        for curve in self.curves.iter_mut() {
+            curve.rotate(ctx);
+
+            curve.tick_trail(delta);
+
+            curve.mv(delta);
+        }
+
+        None
     }
 
     fn tick_winner(&mut self, delta: f32, ctx: &mut Context, started: Instant) {
@@ -224,19 +316,6 @@ impl Kurve {
         }
     }
 
-    /// Reset the curves' positions and liveness
-    fn reset_curves(&mut self) {
-        for curve in self.curves.iter_mut() {
-            curve.position = self.bounds.random_pos();
-            curve.alive = true;
-            curve.rotation = random_rot();
-            curve.lines.clear();
-            curve.trail_active = true;
-            curve.trail_countdown = new_trail_countdown();
-            curve.velocity = VELOCITY;
-        }
-    }
-
     /// Process the setup menu
     fn tick_setup_menu(&mut self, ctx: &mut Context) -> GameResult {
         // Handle focused elements first
@@ -253,80 +332,37 @@ impl Kurve {
 
         if let Some(ref mut focus) = self.menu.active_mod {
             focus.update(ctx);
-
             return Ok(());
         }
 
-        // Handle selected elements subcommand
-
-        if ctx.keyboard.is_key_just_pressed(KeyCode::Right) {
-            let item = &mut self.menu.items[self.menu.selected];
-            if let KurveMenuItem::PlayerCurveConfig(conf) = item {
-                conf.selected = conf.selected.next();
-            }
-        }
-
-        if ctx.keyboard.is_key_just_pressed(KeyCode::Left) {
-            let item = &mut self.menu.items[self.menu.selected];
-            if let KurveMenuItem::PlayerCurveConfig(conf) = item {
-                conf.selected = conf.selected.previous();
-            }
-        }
+        self.menu.navigate(ctx);
 
         // Handle Enter
 
         if ctx.keyboard.is_key_just_pressed(KeyCode::Return) {
             let item = &self.menu.items[self.menu.selected];
             match item {
-                KurveMenuItem::PlayerCurveConfig(conf) => match conf.selected {
-                    PlayerConfigFocus::Name => {
-                        self.menu.active_mod =
-                            Some(Box::new(PlayerNameModifier { buf: String::new() }))
-                    }
-                    PlayerConfigFocus::Color => {
-                        if !self.menu.colors.is_empty() {
-                            self.menu.active_mod =
-                                Some(Box::new(PlayerColorModifier::new(self.menu.colors.clone())))
+                KurveMenuItem::PlayerCurveConfig(config) => {
+                    if let Some(action) = self.menu.select_item() {
+                        match action {
+                            menu::SelectAction::Modifier(md) => self.menu.active_mod = Some(md),
+                            menu::SelectAction::RemovePlayer => {
+                                self.players.remove(config.id);
+                                let curve = self.curves.remove(config.id);
+                                self.menu.items.remove(self.menu.selected);
+                                self.menu.colors.push(curve.color);
+                                self.menu.keys.push(curve.move_keys);
+                            }
                         }
                     }
-                    PlayerConfigFocus::Keys => {
-                        self.menu.active_mod = Some(Box::new(PlayerKeyModifier::new()))
-                    }
-                },
+                }
                 KurveMenuItem::AddPlayer => {
-                    if self.menu.colors.is_empty() {
-                        return Ok(());
+                    if !self.menu.colors.is_empty() {
+                        self.handle_add_player(ctx)?;
                     }
-
-                    let id = self.players.len();
-
-                    let config = PlayerConfig {
-                        id,
-                        name: format!("Player {}", id + 1),
-                        color: self.menu.colors.pop().unwrap(),
-                        keys: self.menu.keys.pop().unwrap(),
-                        selected: PlayerConfigFocus::Name,
-                    };
-                    let (player, curve) = config.to_player_curve_pair(ctx, self.bounds)?;
-
-                    self.add_player(player, curve);
-
-                    let mut idx = 0;
-                    let mut items = self.menu.items.iter();
-
-                    while matches!(items.next(), Some(KurveMenuItem::PlayerCurveConfig(_))) {
-                        idx += 1;
-                    }
-
-                    self.menu
-                        .items
-                        .insert(idx, KurveMenuItem::PlayerCurveConfig(config));
-
-                    self.menu.selected += 1;
                 }
                 KurveMenuItem::Start => {
-                    let size = ctx.gfx.drawable_size();
-                    self.set_bounds(ArenaBounds::new_center(size, SIZE_SMALL));
+                    self.set_running_bounds(ctx.gfx.drawable_size());
                     self.reset_curves();
                     self.state = KurveState::StartCountdown {
                         started: Instant::now(),
@@ -395,78 +431,73 @@ impl Kurve {
         }
     }
 
-    /// Process a running game's tick
-    fn tick_running(&mut self, ctx: &mut Context, delta: f32) -> Option<usize> {
-        // Bitflags for collision
-        let mut collisions = 0u8;
+    fn handle_add_player(&mut self, ctx: &mut Context) -> GameResult {
+        let id = self.players.len();
 
-        // Calculate collisions
-        for (i, curve) in self.curves.iter().enumerate() {
-            if !curve.alive {
-                continue;
-            }
+        let config = PlayerConfig {
+            id,
+            name: format!("Player {}", id + 1),
+            color: self.menu.colors.pop().unwrap(),
+            keys: self.menu.keys.pop().unwrap(),
+            selected: PlayerConfigFocus::Name,
+        };
+        let (player, curve) = config.to_player_curve_pair(
+            ctx,
+            self.bounds,
+            !self.paused(),
+            if self.paused() { 0. } else { VELOCITY },
+        )?;
 
-            let bbox = BoundingBox::new(curve.next_pos(delta));
+        self.add_player(player, curve);
 
-            if check_border_collision(
-                self.bounds.x_min,
-                self.bounds.x_max,
-                self.bounds.y_min,
-                self.bounds.y_max,
-                bbox,
-            ) {
-                collisions |= 1 << i;
-                continue;
-            }
+        let mut idx = 0;
+        let mut items = self.menu.items.iter();
 
-            for (j, curve) in self.curves.iter().enumerate() {
-                let lines = &curve.lines;
-
-                // Skip the last few lines of the current curve due to self collision
-                let line_count = if i == j {
-                    lines.len().saturating_sub(3)
-                } else {
-                    lines.len()
-                };
-
-                for (_, line) in lines
-                    .iter()
-                    .enumerate()
-                    .take_while(|(i, _)| *i < line_count)
-                {
-                    if check_line_collision(bbox, line) {
-                        collisions |= 1 << i;
-                    }
-                }
-            }
+        while matches!(items.next(), Some(KurveMenuItem::PlayerCurveConfig(_))) {
+            idx += 1;
         }
 
-        // Apply collisions
-        for (i, curve) in self.curves.iter_mut().enumerate() {
-            if collisions >> i == 1 {
-                curve.velocity = 0.;
-                curve.alive = false;
-            }
-        }
+        self.menu
+            .items
+            .insert(idx, KurveMenuItem::PlayerCurveConfig(config));
 
-        // Check for winners
-        if let Some(winner) = self.check_winner() {
-            return Some(winner);
-        }
+        self.menu.selected += 1;
 
-        // Process movement
+        Ok(())
+    }
+
+    /// Add a player to the game and return their index
+    #[inline]
+    fn add_player(&mut self, player: Player, curve: Curve) {
+        self.players.push(player);
+        self.curves.push(curve);
+    }
+
+    #[inline]
+    fn toggle_pause(&mut self) {
+        match self.state {
+            KurveState::Running => self.state = KurveState::Paused,
+            KurveState::Paused => self.state = KurveState::Running,
+            _ => {}
+        }
+    }
+
+    /// Reset the curves' positions and liveness
+    #[inline]
+    fn reset_curves(&mut self) {
         for curve in self.curves.iter_mut() {
-            curve.rotate(ctx);
-
-            curve.tick_trail(delta);
-
-            curve.mv(delta);
+            curve.position = self.bounds.random_pos();
+            curve.alive = true;
+            curve.rotation = random_rot();
+            curve.lines.clear();
+            curve.trail_active = true;
+            curve.trail_countdown = new_trail_countdown();
+            curve.velocity = VELOCITY;
         }
-
-        None
     }
 
     /// Check whether there is only one curve currently alive
+    #[inline]
     fn check_winner(&self) -> Option<usize> {
         let mut winner = None;
         let mut alive = 0;
@@ -488,38 +519,9 @@ impl Kurve {
         winner
     }
 
-    /// Update the game state
-    pub fn update(&mut self, ctx: &mut Context) -> GameResult {
-        if ctx.keyboard.is_key_just_pressed(KeyCode::Space) {
-            self.toggle_pause();
-        }
-
-        let delta = ctx.time.delta().as_secs_f32();
-
-        match self.state {
-            KurveState::Setup => {
-                self.tick_setup_menu(ctx)?;
-                self.tick_setup_curves(ctx, delta);
-            }
-            KurveState::Running => {
-                if let Some(winner) = self.tick_running(ctx, delta) {
-                    self.state = KurveState::Winner {
-                        started: Instant::now(),
-                        id: winner,
-                    };
-                    self.players[winner].score += 1;
-                }
-            }
-            KurveState::StartCountdown { started } => self.tick_countdown(ctx, started),
-            KurveState::Winner { started, .. } => self.tick_winner(delta, ctx, started),
-            KurveState::Paused => {}
-        }
-
-        Ok(())
-    }
-
     /// Should only be called when we are certain that the selected item in the menu is
     /// a player config. Called in modifiers.
+    #[inline]
     pub fn extract_cfg_player_curve(&mut self) -> (&mut PlayerConfig, &mut Player, &mut Curve) {
         let item = &mut self.menu.items[self.menu.selected];
 
@@ -532,11 +534,35 @@ impl Kurve {
 
         (config, player, curve)
     }
+
+    #[inline]
+    fn paused(&self) -> bool {
+        matches!(self.state, KurveState::Paused)
+    }
+
+    #[inline]
+    fn set_setup_bounds(&mut self, drawable_size: (f32, f32)) {
+        self.bounds = ArenaBounds::new(
+            Point2 {
+                x: drawable_size.0 * SETUP_KURVE_CENTER.0,
+                y: drawable_size.1 * SETUP_KURVE_CENTER.1,
+            },
+            drawable_size,
+            SIZE_SMALL,
+        )
+    }
+
+    #[inline]
+    fn set_running_bounds(&mut self, drawable_size: (f32, f32)) {
+        self.bounds = ArenaBounds::new_center(drawable_size, SIZE_SMALL)
+    }
 }
 
 /// Drawing logic impls
 impl Kurve {
     pub fn draw(&self, ctx: &mut Context, canvas: &mut Canvas) -> GameResult {
+        // Draw arena
+
         let arena_rect = graphics::Rect::new(
             self.bounds.x_min,
             self.bounds.y_min,
@@ -554,6 +580,8 @@ impl Kurve {
         let draw_param = graphics::DrawParam::default();
         canvas.draw(&arena_mesh, draw_param);
 
+        // Draw curves
+
         for curve in self.curves.iter() {
             let trail = curve
                 .lines
@@ -567,7 +595,9 @@ impl Kurve {
 
             canvas.draw_instanced_mesh(curve.mesh.clone(), &trail, draw_param);
 
-            canvas.draw(&curve.mesh, draw_param.dest(curve.position));
+            if curve.alive || !curve.lines.is_empty() {
+                canvas.draw(&curve.mesh, draw_param.dest(curve.position));
+            }
 
             /*             let c_rect =
                 graphics::Rect::new(-CURVE_SIZE, -CURVE_SIZE, CURVE_SIZE * 2., CURVE_SIZE * 2.);
@@ -580,17 +610,19 @@ impl Kurve {
             } */
         }
 
-        if let KurveState::Setup = self.state {
-            self.menu.draw(ctx, canvas, ctx.gfx.drawable_size())?;
-            return Ok(());
-        }
-
-        if let KurveState::StartCountdown { started } = self.state {
-            self.draw_countdown_phase(ctx, canvas, started)?;
-        }
-
-        if let KurveState::Winner { id, .. } = self.state {
-            self.draw_winner_phase(ctx, canvas, &self.players[id].name)
+        match self.state {
+            KurveState::Setup => {
+                self.menu.draw_setup(ctx, canvas, self.paused())?;
+                return Ok(());
+            }
+            KurveState::StartCountdown { started } => {
+                self.draw_countdown_phase(ctx, canvas, started)?
+            }
+            KurveState::Paused => self.menu.draw_setup(ctx, canvas, self.paused())?,
+            KurveState::Winner { id, .. } => {
+                self.draw_winner_phase(ctx, canvas, &self.players[id].name)
+            }
+            KurveState::Running => {}
         }
 
         self.draw_score(ctx, canvas);
@@ -682,6 +714,7 @@ impl Kurve {
         }
 
         let score_text = graphics::Text::new(score_text);
+
         let score_rect = score_text.dimensions(ctx).unwrap();
 
         let draw_param = DrawParam::default().dest(Point2 {

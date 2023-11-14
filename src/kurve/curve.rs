@@ -7,7 +7,6 @@ use super::point::Line;
 use crate::kurve::ArenaBounds;
 use crate::{
     display_key, CURVE_SIZE, INV_DURATION, ROT_SPEED, TRAIL_INTERVAL_MAX, TRAIL_INTERVAL_MIN,
-    VELOCITY,
 };
 use ggez::graphics::Color;
 use ggez::input::keyboard::KeyCode;
@@ -75,6 +74,8 @@ impl Curve {
         mv_keys: MoveKeys,
         mesh: graphics::Mesh,
         color: Color,
+        alive: bool,
+        velocity: f32,
     ) -> Self {
         let mut rng = rand::thread_rng();
         let p_x: f32 = rng.gen_range(bounds.x_min..bounds.x_max);
@@ -84,7 +85,7 @@ impl Curve {
         Self {
             position: Point2 { x: p_x, y: p_y },
             rotation: rot,
-            velocity: VELOCITY,
+            velocity,
             move_keys: mv_keys,
             player_id,
             lines: VecDeque::new(),
@@ -93,7 +94,7 @@ impl Curve {
             trail_ts: std::time::Instant::now(),
             trail_active: true,
 
-            alive: true,
+            alive,
 
             mesh,
             color,
