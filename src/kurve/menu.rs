@@ -91,7 +91,7 @@ impl KurveMenu {
         }
     }
 
-    pub fn draw_setup(&self, ctx: &mut Context, canvas: &mut Canvas, paused: bool) -> GameResult {
+    pub fn draw(&self, ctx: &mut Context, canvas: &mut Canvas, paused: bool) -> GameResult {
         let (x, y) = ctx.gfx.drawable_size();
 
         let center = if paused {
@@ -447,11 +447,16 @@ impl Debug for KurveMenu {
     }
 }
 
+/// Possible actions to execute on a player config
 pub enum SelectAction {
+    /// Modify the kurve game
     Modifier(Box<dyn PlayerConfigMod>),
+
+    /// Remove a player from the game
     RemovePlayer,
 }
 
+/// Kurve setup menu items
 #[derive(Debug)]
 pub enum KurveMenuItem {
     PlayerCurveConfig(PlayerConfig),
@@ -476,7 +481,6 @@ impl PlayerConfig {
         } = self;
 
         player.name = name.clone();
-        player.move_keys = *keys;
         curve.move_keys = *keys;
         curve.color = *color;
         curve.mesh = Curve::create_mesh(ctx, *color)?;
@@ -491,24 +495,16 @@ impl PlayerConfig {
         alive: bool,
         velocity: f32,
     ) -> Result<(Player, Curve), GameError> {
-        let player = Player::new(self.name.clone(), self.keys);
+        let player = Player::new(self.name.clone());
 
-        let mesh = Curve::create_mesh(ctx, self.color)?;
-
-        let curve = Curve::new_random_pos(
-            self.id,
-            bounds,
-            player.move_keys,
-            mesh,
-            self.color,
-            alive,
-            velocity,
-        );
+        let curve =
+            Curve::new_random_pos(ctx, self.id, bounds, self.keys, self.color, alive, velocity)?;
 
         Ok((player, curve))
     }
 }
 
+/// Focused UI element of a player config in the setup menu
 #[derive(Debug)]
 pub enum PlayerConfigFocus {
     Name,
@@ -537,6 +533,7 @@ impl PlayerConfigFocus {
     }
 }
 
+/// Modifies a player's name
 #[derive(Debug)]
 pub struct PlayerNameModifier {
     /// Current text buffer
@@ -617,6 +614,7 @@ impl PlayerConfigMod for PlayerNameModifier {
     }
 }
 
+/// Modifies the player's input keys
 #[derive(Debug, Clone, Copy)]
 pub struct PlayerKeyModifier {
     dir: RotationDirection,

@@ -52,42 +52,68 @@ impl IntoIterator for Line {
 pub struct BoundingBox([Point2<f32>; 9]);
 
 impl BoundingBox {
-    pub fn new(p: Point2<f32>) -> Self {
+    /// Returns a 'box' of rounded positions around the point with a distance of 1.
+    pub fn new(p: Point2<f32>, distance: f32) -> Self {
+        // All points are clockwise (save the first) for
+        // polygon drawing
         Self([
-            p,
             Point2 {
-                x: (p.x + 1.).round(),
+                x: p.x.round(),
                 y: p.y.round(),
             },
             Point2 {
-                x: (p.x + 1.).round(),
-                y: (p.y - 1.).round(),
+                x: (p.x - distance).round(),
+                y: (p.y - distance).round(),
             },
             Point2 {
                 x: p.x.round(),
-                y: (p.y - 1.).round(),
+                y: (p.y - distance).round(),
             },
             Point2 {
-                x: (p.x - 1.).round(),
-                y: (p.y - 1.).round(),
+                x: (p.x + distance).round(),
+                y: (p.y - distance).round(),
             },
             Point2 {
-                x: (p.x - 1.).round(),
+                x: (p.x + distance).round(),
                 y: p.y.round(),
             },
             Point2 {
-                x: (p.x - 1.).round(),
-                y: (p.y + 1.).round(),
+                x: (p.x + distance).round(),
+                y: (p.y + distance).round(),
             },
             Point2 {
                 x: p.x.round(),
-                y: (p.y + 1.).round(),
+                y: (p.y + distance).round(),
             },
             Point2 {
-                x: (p.x + 1.).round(),
-                y: (p.y + 1.).round(),
+                x: (p.x - distance).round(),
+                y: (p.y + distance).round(),
+            },
+            Point2 {
+                x: (p.x - distance).round(),
+                y: p.y.round(),
             },
         ])
+    }
+
+    /*     pub fn expand(&mut self, amount: f32) {
+        self.0[1].x -= amount;
+        self.0[1].y -= amount;
+        self.0[2].y -= amount;
+        self.0[3].x += amount;
+        self.0[3].y -= amount;
+        self.0[4].x += amount;
+        self.0[5].x += amount;
+        self.0[5].y += amount;
+        self.0[6].y += amount;
+        self.0[7].x -= amount;
+        self.0[7].y += amount;
+        self.0[8].x -= amount;
+    } */
+
+    /// Return the bounding box as polygon points for drawing (without the center point)
+    pub fn as_polygon(&self) -> &[Point2<f32>] {
+        &self.0[1..]
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, Point2<f32>> {

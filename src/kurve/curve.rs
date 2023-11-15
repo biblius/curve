@@ -4,10 +4,9 @@ use std::fmt::{Debug, Display};
 use std::time::{Duration, Instant};
 
 use super::point::Line;
+use super::{DEFAULT_GIRTH, DEFAULT_ROTATION, INV_DURATION, TRAIL_SKIP_MAX, TRAIL_SKIP_MIN};
+use crate::display_key;
 use crate::kurve::ArenaBounds;
-use crate::{
-    display_key, CURVE_SIZE, INV_DURATION, ROT_SPEED, TRAIL_INTERVAL_MAX, TRAIL_INTERVAL_MIN,
-};
 use ggez::graphics::Color;
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Point2;
@@ -26,6 +25,12 @@ pub struct Curve {
 
     /// How fast the curve is moving
     pub velocity: f32,
+
+    /// How much to increment rotation on movement
+    pub rotation_speed: f32,
+
+    /// Used for multiplying the bounding box distance
+    pub girth: f32,
 
     /// The movement keycodes for this curve
     pub move_keys: MoveKeys,
@@ -69,36 +74,39 @@ impl Debug for Curve {
 
 impl Curve {
     pub fn new_random_pos(
+        ctx: &mut Context,
         player_id: usize,
         bounds: ArenaBounds,
         mv_keys: MoveKeys,
-        mesh: graphics::Mesh,
         color: Color,
         alive: bool,
         velocity: f32,
-    ) -> Self {
+    ) -> Result<Self, GameError> {
         let mut rng = rand::thread_rng();
         let p_x: f32 = rng.gen_range(bounds.x_min..bounds.x_max);
         let p_y: f32 = rng.gen_range(bounds.y_min..bounds.y_max);
         let rot: f32 = rng.gen_range(0f32..2. * PI);
 
-        Self {
+        Ok(Self {
             position: Point2 { x: p_x, y: p_y },
             rotation: rot,
             velocity,
+            rotation_speed: DEFAULT_ROTATION,
+            girth: DEFAULT_GIRTH,
+
             move_keys: mv_keys,
             player_id,
             lines: VecDeque::new(),
 
-            trail_countdown: new_trail_countdown(),
+            trail_countdown: Self::new_trail_countdown(),
             trail_ts: std::time::Instant::now(),
             trail_active: true,
 
             alive,
 
-            mesh,
+            mesh: Self::create_mesh(ctx, color)?,
             color,
-        }
+        })
     }
 
     /*     pub fn new(player_id: usize, pos: Point2<f32>, rot: f32, mv_keys: MoveKeys) -> Self {
@@ -122,11 +130,11 @@ impl Curve {
     #[inline]
     pub fn rotate(&mut self, ctx: &mut Context) {
         if ctx.keyboard.is_key_pressed(self.move_keys.cw) {
-            self.rotation += ROT_SPEED;
+            self.rotation += self.rotation_speed;
         }
 
         if ctx.keyboard.is_key_pressed(self.move_keys.ccw) {
-            self.rotation -= ROT_SPEED;
+            self.rotation -= self.rotation_speed;
         }
     }
 
@@ -168,7 +176,7 @@ impl Curve {
         // Enable trail if countdown is done
         if now.duration_since(self.trail_ts) > INV_DURATION && !self.trail_active {
             self.trail_active = true;
-            self.trail_countdown = new_trail_countdown();
+            self.trail_countdown = Self::new_trail_countdown();
             self.trail_ts = now;
         }
 
@@ -179,15 +187,24 @@ impl Curve {
         }
     }
 
+    #[inline]
     pub fn create_mesh(ctx: &mut Context, color: Color) -> Result<graphics::Mesh, GameError> {
         graphics::Mesh::new_circle(
             ctx,
             graphics::DrawMode::fill(),
             Point2 { x: 0., y: 0. },
-            CURVE_SIZE,
+            2.,
             0.1,
             color,
         )
+    }
+
+    /// Get a random duration for counting down the segment skip in the curves
+    #[inline]
+    pub fn new_trail_countdown() -> Duration {
+        let mut rng = rand::thread_rng();
+        let millis = rng.gen_range(TRAIL_SKIP_MIN..TRAIL_SKIP_MAX);
+        Duration::from_millis(millis)
     }
 }
 
@@ -214,11 +231,4 @@ impl Display for MoveKeys {
         );
         write!(f, "{l}/{r}")
     }
-}
-
-/// Get a random duration for counting down the segment skip in the curves
-pub fn new_trail_countdown() -> Duration {
-    let mut rng = rand::thread_rng();
-    let millis = rng.gen_range(TRAIL_INTERVAL_MIN..TRAIL_INTERVAL_MAX);
-    Duration::from_millis(millis)
 }

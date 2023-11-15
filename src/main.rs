@@ -1,32 +1,11 @@
-use game::Game;
+use context::Game;
 use ggez::conf::WindowMode;
 use ggez::event::{self};
 use ggez::GameResult;
-use std::f32::consts::FRAC_PI_8;
-use std::time::Duration;
 
-mod game;
+mod context;
 mod kurve;
 mod menu;
-
-const CURVE_SIZE: f32 = 2.;
-
-const ROT_SPEED: f32 = FRAC_PI_8 * 0.1;
-const VELOCITY: f32 = 60.;
-
-const TRAIL_INTERVAL_MIN: u64 = 2000;
-const TRAIL_INTERVAL_MAX: u64 = 4000;
-
-/// 2-3 players
-const SIZE_SMALL: (f32, f32) = (0.35, 0.55);
-
-/// 4-6 players
-// const SIZE_MED: (f32, f32) = (0.5, 0.5);
-
-const WINNER_GLOAT_DURATION: Duration = Duration::from_secs(3);
-
-/// Curve invulnerability duration when it is not leaving the trail
-const INV_DURATION: Duration = Duration::from_millis(300);
 
 pub fn main() -> GameResult {
     let cb = ggez::ContextBuilder::new("curve", "biblius");
