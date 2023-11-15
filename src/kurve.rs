@@ -67,7 +67,7 @@ const SETUP_KURVE_CENTER: (f32, f32) = (0.7, 0.5);
 /// Multipliers for the x and y axis used to position the menu during setup
 const SETUP_MENU_CENTER: (f32, f32) = (0.3, 0.3);
 
-const PAUSE_MENU_CENTER: (f32, f32) = (0.5, 0.5);
+const PAUSE_MENU_CENTER: (f32, f32) = (0.52, 0.5);
 
 /// Represents the current phase of the game
 #[derive(Debug)]
@@ -350,8 +350,10 @@ impl Kurve {
                                 self.players.remove(config.id);
                                 let curve = self.curves.remove(config.id);
                                 self.menu.items.remove(self.menu.selected);
+                                self.menu.decrement_config_ids(self.menu.selected);
                                 self.menu.colors.push(curve.color);
                                 self.menu.keys.push(curve.move_keys);
+                                self.menu.selected = self.menu.selected.saturating_sub(1);
                             }
                         }
                     }
@@ -359,6 +361,11 @@ impl Kurve {
                 KurveMenuItem::AddPlayer => {
                     if !self.menu.colors.is_empty() {
                         self.handle_add_player(ctx)?;
+                        for item in self.menu.items.iter_mut() {
+                            if let KurveMenuItem::PlayerCurveConfig(conf) = item {
+                                conf.selected = PlayerConfigFocus::Name;
+                            }
+                        }
                     }
                 }
                 KurveMenuItem::Start => {

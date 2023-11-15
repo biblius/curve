@@ -12,7 +12,7 @@ mod menu;
 const CURVE_SIZE: f32 = 2.;
 
 const ROT_SPEED: f32 = FRAC_PI_8 * 0.1;
-const VELOCITY: f32 = 50.;
+const VELOCITY: f32 = 60.;
 
 const TRAIL_INTERVAL_MIN: u64 = 2000;
 const TRAIL_INTERVAL_MAX: u64 = 4000;

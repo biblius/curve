@@ -83,6 +83,14 @@ impl KurveMenu {
         }
     }
 
+    pub fn decrement_config_ids(&mut self, from: usize) {
+        for config in self.items[from..].iter_mut() {
+            if let KurveMenuItem::PlayerCurveConfig(cfg) = config {
+                cfg.id = cfg.id.saturating_sub(1);
+            }
+        }
+    }
+
     pub fn draw_setup(&self, ctx: &mut Context, canvas: &mut Canvas, paused: bool) -> GameResult {
         let (x, y) = ctx.gfx.drawable_size();
 
@@ -149,6 +157,10 @@ impl KurveMenu {
         selected: bool,
         offset: f32,
     ) -> GameResult {
+        const NAME_OFFSET: f32 = 0.03;
+        const KEYS_OFFSET: f32 = 0.35;
+        const COLOR_OFFSET: f32 = 0.5;
+        const REMOVE_OFFSET: f32 = 0.8;
         let PlayerConfig {
             name,
             color,
@@ -158,7 +170,7 @@ impl KurveMenu {
         } = config;
         let (x, y) = ctx.gfx.drawable_size();
 
-        let size = (x * 0.425, y * 0.05);
+        let size = (x * 0.4, y * 0.05);
 
         // Full rect for item
 
@@ -177,7 +189,7 @@ impl KurveMenu {
         canvas.draw(
             &name,
             DrawParam::default().dest(Point2 {
-                x: rect.x + size.0 * 0.1,
+                x: rect.x + size.0 * NAME_OFFSET,
                 y: rect.y + size.1 * 0.5 - name_rect.h * 0.5,
             }),
         );
@@ -190,7 +202,7 @@ impl KurveMenu {
         canvas.draw(
             &keys,
             DrawParam::default().dest(Point2 {
-                x: rect.x + size.0 * 0.5 - keys_rect.w * 0.5,
+                x: rect.x + size.0 * KEYS_OFFSET - keys_rect.w * 0.5,
                 y: rect.y + size.1 * 0.5 - keys_rect.h * 0.5,
             }),
         );
@@ -198,7 +210,7 @@ impl KurveMenu {
         // Player color
 
         let mut color_rect = graphics::Rect::new(
-            rect.x + rect.w * 0.8,
+            rect.x + rect.w * COLOR_OFFSET,
             rect.y + rect.h * 0.25,
             rect.h * 0.5,
             rect.h * 0.5,
@@ -208,6 +220,24 @@ impl KurveMenu {
             graphics::Mesh::new_rectangle(ctx, graphics::DrawMode::fill(), color_rect, *color)?;
 
         canvas.draw(&color_mesh, DrawParam::default());
+
+        // Remove player
+
+        let mut remove_rect = graphics::Rect::new(
+            rect.x + rect.w * REMOVE_OFFSET,
+            rect.y + rect.h * 0.5,
+            rect.h * 0.5,
+            rect.h * 0.1,
+        );
+
+        let remove_mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::fill(),
+            remove_rect,
+            Color::WHITE,
+        )?;
+
+        canvas.draw(&remove_mesh, DrawParam::default());
 
         // If currently selected draw the select boxes
 
@@ -231,7 +261,7 @@ impl KurveMenu {
                     canvas.draw(
                         &inner_border_mesh,
                         DrawParam::default().dest(Point2 {
-                            x: rect.x + size.0 * 0.1 - adjust,
+                            x: rect.x + size.0 * NAME_OFFSET - adjust,
                             y: rect.y + size.1 * 0.5 - name_rect.h * 0.5,
                         }),
                     );
@@ -266,12 +296,29 @@ impl KurveMenu {
                     canvas.draw(
                         &inner_border_mesh,
                         DrawParam::default().dest(Point2 {
-                            x: rect.x + size.0 * 0.5 - keys_rect.w * 0.5,
+                            x: rect.x + size.0 * KEYS_OFFSET - keys_rect.w * 0.5,
                             y: rect.y + size.1 * 0.5 - keys_rect.h * 0.5,
                         }),
                     );
                 }
-                PlayerConfigFocus::Remove => {}
+                PlayerConfigFocus::Remove => {
+                    let adjust_x = (remove_rect.w * 1.4 - remove_rect.w) * 0.5;
+                    let adjust_y = (remove_rect.h * 3. - remove_rect.h) * 0.5;
+                    remove_rect.w *= 1.4;
+                    remove_rect.x -= adjust_x;
+                    remove_rect.h *= 3.;
+                    remove_rect.y -= adjust_y;
+                    let inner_border_mesh = graphics::Mesh::new_rectangle(
+                        ctx,
+                        graphics::DrawMode::stroke(2.),
+                        remove_rect,
+                        *color,
+                    )?;
+                    canvas.draw(
+                        &inner_border_mesh,
+                        DrawParam::default(), // Rect pos is already set
+                    );
+                }
             }
         }
 
@@ -430,6 +477,7 @@ impl PlayerConfig {
 
         player.name = name.clone();
         player.move_keys = *keys;
+        curve.move_keys = *keys;
         curve.color = *color;
         curve.mesh = Curve::create_mesh(ctx, *color)?;
         Ok(())
