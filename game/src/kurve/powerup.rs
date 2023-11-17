@@ -3,31 +3,58 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ggez::{mint::Point2, Context, GameResult};
+use ggez::{graphics::Color, mint::Point2, Context, GameResult};
 
-use super::{curve::Curve, point::Girth, POWERMOD_SIZE};
+use super::{
+    curve::Curve,
+    point::{BoundingCircle, Girth},
+    POWERMOD_SIZE,
+};
 
 /// Modifies the curve in some way
 #[derive(Debug)]
 pub struct PowerMod {
     pub point: Point2<f32>,
     pub ty: PowerModifier,
+    pub bbox: BoundingCircle,
 }
 
 impl PowerMod {
     #[inline]
     pub fn new(point: Point2<f32>, ty: PowerModifier) -> Self {
-        Self { point, ty }
+        Self {
+            point,
+            ty,
+            bbox: BoundingCircle::new(point, POWERMOD_SIZE),
+        }
     }
 
     #[inline]
-    pub fn bounds(&self) -> [f32; 4] {
-        [
+    pub fn color(&self) -> Color {
+        let green = Color {
+            r: 0.50,
+            g: 0.79,
+            b: 0.64,
+            a: 1.,
+        };
+        match self.ty {
+            PowerModifier::SpeedUp => green,
+            PowerModifier::RotUp => green,
+            PowerModifier::Invulnerability => green,
+            PowerModifier::Anorexia => green,
+            PowerModifier::SpeedDown => Color::RED,
+            PowerModifier::RotDown => Color::RED,
+            PowerModifier::Chungus => Color::RED,
+        }
+    }
+
+    pub fn bounds(&self) -> (f32, f32, f32, f32) {
+        (
             self.point.x - POWERMOD_SIZE * 0.5,
             self.point.x + POWERMOD_SIZE * 0.5,
             self.point.y - POWERMOD_SIZE * 0.5,
-            self.point.y + POWERMOD_SIZE * 0.5,
-        ]
+            self.point.y - POWERMOD_SIZE * 0.5,
+        )
     }
 }
 

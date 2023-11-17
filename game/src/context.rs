@@ -1,7 +1,8 @@
 use crate::kurve::Kurve;
 use crate::menu::{MainMenu, MainMenuItem};
+use ggez::audio::{SoundSource, Source};
 use ggez::event::{self};
-use ggez::graphics::{self, Color};
+use ggez::graphics::{self, Color, Image};
 use ggez::input::keyboard::{KeyCode, KeyInput};
 use ggez::{Context, GameError, GameResult};
 use std::fmt::Debug;
@@ -23,7 +24,10 @@ pub struct Game {
 impl Game {
     pub fn new(ctx: &mut Context) -> Result<Self, GameError> {
         let kurve = Kurve::new(ctx)?;
-
+        /*         Source::new(ctx, "/httm.mp3")
+        .unwrap()
+        .play_detached(ctx)
+        .unwrap(); */
         Ok(Self {
             main_menu: MainMenu::new(),
             kurve,

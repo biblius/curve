@@ -1,6 +1,7 @@
 use super::curve::{Curve, MoveKeys};
 use super::PAUSE_MENU_CENTER;
 use super::{player::Player, ArenaBounds, Kurve, SETUP_MENU_CENTER};
+use crate::kurve::SIZE_SMALL;
 use crate::{display_key, key_to_str};
 use ggez::GameResult;
 use ggez::{
@@ -170,7 +171,7 @@ impl KurveMenu {
         } = config;
         let (x, y) = ctx.gfx.drawable_size();
 
-        let size = (x * 0.4, y * 0.05);
+        let size = (x * SIZE_SMALL.0, y * 0.05);
 
         // Full rect for item
 

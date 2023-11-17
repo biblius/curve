@@ -1,0 +1,1 @@
+cp -r resources target/$1

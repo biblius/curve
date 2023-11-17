@@ -8,9 +8,21 @@ mod kurve;
 mod menu;
 
 pub fn main() -> GameResult {
-    let cb = ggez::ContextBuilder::new("curve", "biblius");
+    let mut cb = ggez::ContextBuilder::new("curve", "biblius");
+
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let mut path = std::path::PathBuf::from(manifest_dir);
+        path.push("resources");
+        println!("Adding path {path:?}");
+        cb = cb.add_resource_path(path);
+    }
 
     let (mut ctx, event_loop) = cb.build()?;
+
+    println!("Full filesystem info: {:#?}", ctx.fs);
+
+    println!("Resource stats:");
+    ctx.fs.print_all();
 
     ctx.gfx.set_window_title("curve");
 

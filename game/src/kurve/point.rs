@@ -1,4 +1,7 @@
-use std::ops::{Index, IndexMut};
+use std::{
+    f32::consts::{FRAC_PI_8, PI},
+    ops::{Index, IndexMut},
+};
 
 use ggez::{
     graphics::{Color, InstanceArray, Mesh},
@@ -169,6 +172,26 @@ impl IntoIterator for Line {
 
     fn into_iter(self) -> Self::IntoIter {
         self.points.into_iter()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BoundingCircle(pub Vec<Point2<f32>>);
+
+impl BoundingCircle {
+    pub fn new(point: Point2<f32>, distance: f32) -> Self {
+        let mut points = vec![];
+        let mut rot = PI;
+        while rot > -PI {
+            let point = Point2 {
+                x: (point.x + distance * rot.cos()).round(),
+                y: (point.y + distance * rot.sin()).round(),
+            };
+            points.push(point);
+            rot -= FRAC_PI_8;
+        }
+
+        Self(points)
     }
 }
 
