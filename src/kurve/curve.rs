@@ -3,7 +3,7 @@ use std::f32::consts::PI;
 use std::fmt::{Debug, Display};
 use std::time::{Duration, Instant};
 
-use super::point::Line;
+use super::point::{Girth, Line};
 use super::{DEFAULT_GIRTH, DEFAULT_ROTATION, INV_DURATION, TRAIL_SKIP_MAX, TRAIL_SKIP_MIN};
 use crate::display_key;
 use crate::kurve::ArenaBounds;
@@ -30,13 +30,13 @@ pub struct Curve {
     pub rotation_speed: f32,
 
     /// Used for multiplying the bounding box distance
-    pub girth: f32,
+    pub girth: Girth,
 
     /// The movement keycodes for this curve
     pub move_keys: MoveKeys,
 
     /// The current duration until the trail should be drawn
-    pub trail_countdown: Duration,
+    pub trail_fuse: Duration,
 
     /// When the last curve segment started or ended, used in unison with
     /// [trail_active][Self::trail_active]
@@ -50,8 +50,6 @@ pub struct Curve {
 
     pub alive: bool,
 
-    pub mesh: graphics::Mesh,
-
     pub color: Color,
 }
 
@@ -63,7 +61,7 @@ impl Debug for Curve {
             .field("rotation", &self.rotation)
             .field("velocity", &self.velocity)
             .field("move_keys", &self.move_keys)
-            .field("trail_countdown", &self.trail_countdown)
+            .field("trail_fuse", &self.trail_fuse)
             .field("trail_ts", &self.trail_ts)
             .field("trail_active", &self.trail_active)
             .field("alive", &self.alive)
@@ -74,7 +72,7 @@ impl Debug for Curve {
 
 impl Curve {
     pub fn new_random_pos(
-        ctx: &mut Context,
+        _ctx: &mut Context,
         player_id: usize,
         bounds: ArenaBounds,
         mv_keys: MoveKeys,
@@ -98,13 +96,12 @@ impl Curve {
             player_id,
             lines: VecDeque::new(),
 
-            trail_countdown: Self::new_trail_countdown(),
+            trail_fuse: Self::new_trail_fuse(),
             trail_ts: std::time::Instant::now(),
             trail_active: true,
 
             alive,
 
-            mesh: Self::create_mesh(ctx, color)?,
             color,
         })
     }
@@ -118,7 +115,7 @@ impl Curve {
             player_id,
             lines: VecDeque::new(),
 
-            trail_countdown: new_trail_countdown(),
+            trail_fuse: new_trail_fuse(),
             trail_ts: std::time::Instant::now(),
             trail_active: true,
 
@@ -165,10 +162,15 @@ impl Curve {
 
     /// Process the curve's trail and append a line to its lines if the trail is active
     pub fn tick_trail(&mut self, delta: f32) {
+        // Quick and dirty way to enable invulnerability powerup
+        if self.trail_fuse == Duration::MAX {
+            return;
+        }
+
         let now = std::time::Instant::now();
 
         // Disable trail if countdown is done and invulnerability countdown
-        if now.duration_since(self.trail_ts) > self.trail_countdown {
+        if now.duration_since(self.trail_ts) > self.trail_fuse {
             self.trail_active = false;
             self.trail_ts = now;
         }
@@ -176,24 +178,28 @@ impl Curve {
         // Enable trail if countdown is done
         if now.duration_since(self.trail_ts) > INV_DURATION && !self.trail_active {
             self.trail_active = true;
-            self.trail_countdown = Self::new_trail_countdown();
+            self.trail_fuse = Self::new_trail_fuse();
             self.trail_ts = now;
         }
 
         if self.trail_active {
             // Push the line to the actual self
-            let line = Line::interpolate(self.position, self.next_pos(delta));
+            let line = Line::interpolate(self.position, self.next_pos(delta), self.girth);
             self.lines.push_back(line);
         }
     }
 
     #[inline]
-    pub fn create_mesh(ctx: &mut Context, color: Color) -> Result<graphics::Mesh, GameError> {
+    pub fn create_mesh(
+        ctx: &mut Context,
+        color: Color,
+        girth: Girth,
+    ) -> Result<graphics::Mesh, GameError> {
         graphics::Mesh::new_circle(
             ctx,
             graphics::DrawMode::fill(),
             Point2 { x: 0., y: 0. },
-            2.,
+            girth.as_f32(),
             0.1,
             color,
         )
@@ -201,7 +207,7 @@ impl Curve {
 
     /// Get a random duration for counting down the segment skip in the curves
     #[inline]
-    pub fn new_trail_countdown() -> Duration {
+    pub fn new_trail_fuse() -> Duration {
         let mut rng = rand::thread_rng();
         let millis = rng.gen_range(TRAIL_SKIP_MIN..TRAIL_SKIP_MAX);
         Duration::from_millis(millis)

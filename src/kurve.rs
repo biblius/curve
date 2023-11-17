@@ -1,11 +1,12 @@
 use self::menu::{KurveMenu, KurveMenuItem, PlayerConfig, PlayerConfigFocus};
+use self::point::Girth;
 use self::powerup::{PowerMod, PowerModifier, PowerTimeout};
 use curve::MoveKeys;
 use ggez::graphics::{Drawable, PxScale};
 use ggez::input::keyboard::KeyCode;
 use ggez::GameError;
 use ggez::{
-    graphics::{self, Canvas, Color, DrawParam, InstanceArray},
+    graphics::{self, Canvas, Color, DrawParam},
     mint::Point2,
     Context, GameResult,
 };
@@ -13,6 +14,7 @@ use player::Player;
 use point::Line;
 use rand::distributions::uniform::SampleUniform;
 use rand::{thread_rng, Rng};
+use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_8, PI};
 use std::fmt::{Debug, Write};
 use std::time::{Duration, Instant};
@@ -33,7 +35,7 @@ const DEFAULT_ROTATION: f32 = FRAC_PI_8 * 0.1;
 const DEFAULT_VELOCITY: f32 = 60.;
 
 /// Default girth
-const DEFAULT_GIRTH: f32 = 1.;
+const DEFAULT_GIRTH: Girth = Girth::Normal;
 
 /// The minimum amount a curve will draw a trail in miliseconds
 const TRAIL_SKIP_MIN: u64 = 2000;
@@ -104,7 +106,9 @@ const POWERMODS: [PowerModifier; 7] = [
     PowerModifier::Invulnerability,
 ];
 
-const POWERMOD_DURATION: Duration = Duration::from_millis(3000);
+const POWERMOD_DURATION: Duration = Duration::from_millis(30000);
+
+const POWERMOD_SIZE: f32 = 10.;
 
 /// Multipliers for the x and y axis used to position the kurve area during setup
 const SETUP_KURVE_CENTER: (f32, f32) = (0.7, 0.5);
@@ -158,7 +162,14 @@ pub struct Kurve {
     /// Current game state
     pub state: KurvePhase,
 
-    pub powermods: Vec<PowerMod>,
+    pub powers: PowerSupply,
+
+    pub menu: KurveMenu,
+}
+
+#[derive(Debug)]
+pub struct PowerSupply {
+    pub powermods: HashMap<usize, PowerMod>,
 
     pub power_timeouts: Vec<PowerTimeout>,
 
@@ -166,7 +177,43 @@ pub struct Kurve {
 
     pub last_powermod: Instant,
 
-    pub menu: KurveMenu,
+    pub last_id: usize,
+}
+
+impl PowerSupply {
+    pub fn tick_powermods(&mut self, bounds: ArenaBounds) {
+        if Instant::now().duration_since(self.last_powermod) >= self.power_fuse {
+            if self.powermods.len() < 10 {
+                let r = thread_rng().gen_range(0..POWERMODS.len());
+                let powermod = PowerMod::new(bounds.random_pos(), POWERMODS[r]);
+
+                // Insert and increment
+                self.powermods.insert(self.last_id, powermod);
+                self.last_id += 1;
+            }
+            self.last_powermod = Instant::now();
+            self.power_fuse =
+                Duration::from_millis(thread_rng().gen_range(MIN_POWERMOD_FUSE..MAX_POWERMOD_FUSE));
+        }
+    }
+
+    /// Completely reset the powermods state
+    fn reset_powermods(&mut self) {
+        self.power_fuse =
+            Duration::from_millis(thread_rng().gen_range(MIN_POWERMOD_FUSE..MAX_POWERMOD_FUSE));
+        self.last_powermod = Instant::now();
+        self.powermods.clear();
+        self.power_timeouts.clear();
+        self.last_id = 0;
+    }
+
+    fn add_timeout(&mut self, curve: usize, ty: PowerModifier) {
+        self.power_timeouts.push(PowerTimeout {
+            curve,
+            started: Instant::now(),
+            ty,
+        });
+    }
 }
 
 /// Game logic implementations
@@ -224,10 +271,13 @@ impl Kurve {
                 keys,
                 active_mod: None,
             },
-            powermods: Vec::with_capacity(10),
-            power_timeouts: Vec::with_capacity(20),
-            power_fuse: Duration::MAX,
-            last_powermod: Instant::now(),
+            powers: PowerSupply {
+                powermods: HashMap::with_capacity(10),
+                power_timeouts: Vec::with_capacity(20),
+                power_fuse: Duration::MAX,
+                last_powermod: Instant::now(),
+                last_id: 0,
+            },
         })
     }
 
@@ -245,7 +295,7 @@ impl Kurve {
                 self.tick_setup_curves(ctx, delta);
             }
             KurvePhase::Running => {
-                if let Some(winner) = self.tick_running(ctx, delta) {
+                if let Some(winner) = self.tick_running(ctx, delta)? {
                     self.state = KurvePhase::Winner {
                         started: Instant::now(),
                         id: winner,
@@ -273,23 +323,41 @@ impl Kurve {
     }
 
     /// Process a running game's tick
-    fn tick_running(&mut self, ctx: &mut Context, delta: f32) -> Option<usize> {
+    fn tick_running(&mut self, ctx: &mut Context, delta: f32) -> Result<Option<usize>, GameError> {
         // Bitflags for collision
         let mut collisions = 0u8;
 
-        self.tick_powermods();
+        // Holds the curve index, powermod index and powermod type in that order
+        let mut apply_power_mods = vec![];
 
-        // Calculate collisions
+        self.powers.tick_powermods(self.bounds);
+
+        // Calculate collisions and powermods
         for (i, curve) in self.curves.iter().enumerate() {
-            if !curve.alive {
+            /*             if !curve.alive {
                 continue;
+            } */
+
+            let bbox = BoundingBox::new(curve.next_pos(delta), curve.girth.as_f32());
+
+            for (id, powermod) in self.powers.powermods.iter() {
+                let bounds = powermod.bounds();
+
+                for point in bbox {
+                    if point.x > bounds[0]
+                        && point.x < bounds[1]
+                        && point.y > bounds[2]
+                        && point.y < bounds[3]
+                    {
+                        apply_power_mods.push((i, *id, powermod.ty));
+                        break;
+                    }
+                }
             }
 
-            let bbox = BoundingBox::new(curve.next_pos(delta), curve.girth);
-
-            // Check powerup collection
-
-            for point in bbox.iter() {}
+            if !curve.trail_active {
+                continue;
+            }
 
             if check_border_collision(
                 self.bounds.x_min,
@@ -307,25 +375,49 @@ impl Kurve {
 
                 // Skip the last few lines of the current curve due to self collision
                 let line_count = if i == j {
-                    lines.len().saturating_sub(10)
+                    lines.len().saturating_sub(15)
                 } else {
                     lines.len()
                 };
 
+                // Check for line collisions
                 for (_, line) in lines
                     .iter()
                     .enumerate()
                     .take_while(|(i, _)| *i < line_count)
                 {
-                    if check_line_collision(bbox, line) {
+                    if check_bbox_colision(bbox, line) {
                         collisions |= 1 << i;
                     }
                 }
             }
         }
 
+        // Remove pending powermods
+        self.powers.power_timeouts.retain(|timeout| {
+            let expired = Instant::now().duration_since(timeout.started) >= POWERMOD_DURATION;
+            if expired {
+                timeout
+                    .ty
+                    .remove(ctx, &mut self.curves[timeout.curve])
+                    .unwrap(); // TODO: see if we can avoid this
+            }
+            !expired
+        });
+
+        // Apply powermods
+
+        for (curve, power, powermod) in apply_power_mods {
+            powermod.apply(ctx, &mut self.curves[curve])?;
+            self.powers.powermods.remove(&power);
+            self.powers.add_timeout(curve, powermod);
+        }
+
         // Apply collisions
         for (i, curve) in self.curves.iter_mut().enumerate() {
+            if !curve.alive {
+                continue;
+            }
             if collisions >> i == 1 {
                 curve.velocity = 0.;
                 curve.alive = false;
@@ -334,7 +426,7 @@ impl Kurve {
 
         // Check for winners
         if let Some(winner) = self.check_winner() {
-            return Some(winner);
+            return Ok(Some(winner));
         }
 
         // Process movement
@@ -346,7 +438,7 @@ impl Kurve {
             curve.mv(delta);
         }
 
-        None
+        Ok(None)
     }
 
     fn tick_winner(&mut self, delta: f32, ctx: &mut Context, started: Instant) {
@@ -361,7 +453,7 @@ impl Kurve {
 
         if now.duration_since(started) >= WINNER_GLOAT_DURATION {
             self.reset_curves();
-            self.reset_powermods();
+            self.powers.reset_powermods();
             self.state = KurvePhase::StartCountdown {
                 started: Instant::now(),
             };
@@ -437,7 +529,7 @@ impl Kurve {
                 KurveMenuItem::Start => {
                     self.set_running_bounds(ctx.gfx.drawable_size());
                     self.reset_curves();
-                    self.reset_powermods();
+                    self.powers.reset_powermods();
                     self.state = KurvePhase::StartCountdown {
                         started: Instant::now(),
                     };
@@ -467,7 +559,7 @@ impl Kurve {
     fn tick_setup_curves(&mut self, ctx: &mut Context, delta: f32) {
         // Calculate wall collisions
         for curve in self.curves.iter_mut() {
-            let bbox = BoundingBox::new(curve.next_pos(delta), curve.girth);
+            let bbox = BoundingBox::new(curve.next_pos(delta), curve.girth.as_f32());
             if let Some(collision) =
                 check_border_axis_collision(self.bounds.x_min, self.bounds.x_max, bbox.xs())
             {
@@ -504,29 +596,6 @@ impl Kurve {
                 curve.lines.pop_front();
             }
         }
-    }
-
-    /// Spawn powermods
-    fn tick_powermods(&mut self) {
-        if Instant::now().duration_since(self.last_powermod) >= self.power_fuse {
-            if self.powermods.len() < 10 {
-                let r = thread_rng().gen_range(0..POWERMODS.len());
-                let powermod = PowerMod::new(self.bounds.random_pos(), POWERMODS[r]);
-                self.powermods.push(powermod);
-            }
-            self.last_powermod = Instant::now();
-            self.power_fuse =
-                Duration::from_millis(thread_rng().gen_range(MIN_POWERMOD_FUSE..MAX_POWERMOD_FUSE));
-        }
-    }
-
-    /// Completely reset the powermods state
-    fn reset_powermods(&mut self) {
-        self.power_fuse =
-            Duration::from_millis(thread_rng().gen_range(MIN_POWERMOD_FUSE..MAX_POWERMOD_FUSE));
-        self.last_powermod = Instant::now();
-        self.powermods.clear();
-        self.power_timeouts.clear();
     }
 
     fn handle_add_player(&mut self, ctx: &mut Context) -> GameResult {
@@ -589,7 +658,7 @@ impl Kurve {
             curve.rotation = random_rot();
             curve.lines.clear();
             curve.trail_active = true;
-            curve.trail_countdown = Curve::new_trail_countdown();
+            curve.trail_fuse = Curve::new_trail_fuse();
             curve.velocity = DEFAULT_VELOCITY;
             curve.girth = DEFAULT_GIRTH;
             curve.rotation_speed = DEFAULT_ROTATION;
@@ -683,25 +752,47 @@ impl Kurve {
         // Draw curves
 
         for curve in self.curves.iter() {
-            let trail = curve
-                .lines
-                .iter()
-                .fold(InstanceArray::new(ctx, None), |mut acc, el| {
-                    for point in el.iter() {
-                        acc.push((*point).into());
-                    }
-                    acc
-                });
+            let (mut arrs, meshes) = Line::line_meshes_and_arrays(ctx, curve.color)?;
 
-            canvas.draw_instanced_mesh(curve.mesh.clone(), &trail, draw_param);
-
-            if curve.alive || !curve.lines.is_empty() {
-                canvas.draw(&curve.mesh, draw_param.dest(curve.position));
+            for line in curve.lines.iter() {
+                for point in line.iter() {
+                    arrs[line.girth].push((*point).into());
+                }
             }
 
-            let bbox =
-                BoundingBox::new(curve.next_pos(ctx.time.delta().as_secs_f32()), curve.girth);
+            for (mesh, arr) in meshes.into_iter().zip(arrs) {
+                canvas.draw_instanced_mesh(mesh, &arr, draw_param);
+            }
 
+            canvas.draw(
+                &Curve::create_mesh(ctx, curve.color, curve.girth)?,
+                draw_param.dest(curve.position),
+            );
+
+            // Draw debug bbox
+
+            /* let bbox = BoundingBox::new(
+                curve.next_pos(ctx.time.delta().as_secs_f32()),
+                curve.girth.as_f32(),
+            );
+
+            let c_mesh = graphics::Mesh::new_polygon(
+                ctx,
+                graphics::DrawMode::fill(),
+                bbox.as_polygon(),
+                Color::WHITE,
+            )?;
+
+            for _point in bbox {
+                canvas.draw(&c_mesh, draw_param);
+            } */
+        }
+
+        // Draw powermod
+
+        for powermod in self.powers.powermods.values() {
+            let pos = powermod.point;
+            let bbox = BoundingBox::new(pos, 7.);
             let c_mesh = graphics::Mesh::new_polygon(
                 ctx,
                 graphics::DrawMode::fill(),
@@ -714,21 +805,33 @@ impl Kurve {
             }
         }
 
-        // Draw powermod
+        for (i, timeout) in self.powers.power_timeouts.iter().enumerate() {
+            let mut text = graphics::Text::new(
+                Instant::now()
+                    .duration_since(timeout.started)
+                    .as_millis()
+                    .to_string(),
+            );
+            text.set_scale(PxScale::from(24.));
 
-        for powermod in self.powermods.iter() {
-            let pos = powermod.point;
-            let bbox = BoundingBox::new(pos, 4.);
-            let c_mesh = graphics::Mesh::new_polygon(
-                ctx,
-                graphics::DrawMode::fill(),
-                bbox.as_polygon(),
-                Color::WHITE,
-            )?;
+            canvas.draw(
+                &text,
+                DrawParam::default().dest(Point2 {
+                    x: 100.,
+                    y: 20. * i as f32,
+                }),
+            );
 
-            for _point in bbox {
-                canvas.draw(&c_mesh, draw_param);
-            }
+            let mut text = graphics::Text::new(timeout.ty.to_string());
+            text.set_scale(PxScale::from(24.));
+
+            canvas.draw(
+                &text,
+                DrawParam::default().dest(Point2 {
+                    x: 10.,
+                    y: 44. * i as f32,
+                }),
+            );
         }
 
         match self.state {
@@ -903,11 +1006,18 @@ impl ArenaBounds {
 }
 
 #[inline]
-pub fn check_line_collision(bbox: BoundingBox, line: &Line) -> bool {
-    for bp in bbox.iter() {
-        for pt in line.iter() {
-            if pt.x == bp.x && pt.y == bp.y {
-                return true;
+pub fn check_bbox_colision(bbox: BoundingBox, line: &Line) -> bool {
+    for point in line.iter() {
+        // Decrement girth to shrink line bbox since it feels more natural
+        let line_box = BoundingBox::new(
+            *point,
+            line.girth.decrement().decrement().decrement().as_f32(),
+        );
+        for line_point in line_box {
+            for curve_point in bbox.iter() {
+                if line_point.x == curve_point.x && line_point.y == curve_point.y {
+                    return true;
+                }
             }
         }
     }

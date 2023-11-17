@@ -475,7 +475,7 @@ pub struct PlayerConfig {
 }
 
 impl PlayerConfig {
-    pub fn apply(&self, ctx: &mut Context, player: &mut Player, curve: &mut Curve) -> GameResult {
+    pub fn apply(&self, _ctx: &mut Context, player: &mut Player, curve: &mut Curve) -> GameResult {
         let Self {
             name, color, keys, ..
         } = self;
@@ -483,7 +483,7 @@ impl PlayerConfig {
         player.name = name.clone();
         curve.move_keys = *keys;
         curve.color = *color;
-        curve.mesh = Curve::create_mesh(ctx, *color)?;
+
         Ok(())
     }
 

@@ -1,14 +1,116 @@
-use ggez::mint::Point2;
+use std::ops::{Index, IndexMut};
+
+use ggez::{
+    graphics::{Color, InstanceArray, Mesh},
+    mint::Point2,
+    Context, GameError,
+};
+
+use super::curve::Curve;
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Hash)]
+pub enum Girth {
+    Tiny,
+    Small,
+    Normal,
+    Large,
+    Larger,
+    Chungus,
+}
+
+impl Girth {
+    #[inline]
+    pub const fn min() -> Self {
+        Self::Tiny
+    }
+
+    #[inline]
+    pub const fn max() -> Self {
+        Self::Chungus
+    }
+
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Girth::Tiny => 1.0,
+            Girth::Small => 1.5,
+            Girth::Normal => 2.0,
+            Girth::Large => 4.0,
+            Girth::Larger => 6.0,
+            Girth::Chungus => 8.0,
+        }
+    }
+
+    #[inline]
+    pub fn increment(&self) -> Self {
+        use Girth as G;
+        match self {
+            G::Tiny => G::Small,
+            G::Small => G::Normal,
+            G::Normal => G::Large,
+            G::Large => G::Larger,
+            G::Larger => G::Chungus,
+            G::Chungus => G::Chungus,
+        }
+    }
+
+    #[inline]
+    pub fn decrement(&self) -> Self {
+        use Girth as G;
+        match self {
+            G::Tiny => G::Tiny,
+            G::Small => G::Tiny,
+            G::Normal => G::Small,
+            G::Large => G::Normal,
+            G::Larger => G::Large,
+            G::Chungus => G::Larger,
+        }
+    }
+}
+
+impl<T> Index<Girth> for [T; 6] {
+    type Output = T;
+
+    fn index(&self, index: Girth) -> &Self::Output {
+        match index {
+            Girth::Tiny => &self[0],
+            Girth::Small => &self[1],
+            Girth::Normal => &self[2],
+            Girth::Large => &self[3],
+            Girth::Larger => &self[4],
+            Girth::Chungus => &self[5],
+        }
+    }
+}
+
+impl<T> IndexMut<Girth> for [T; 6] {
+    fn index_mut(&mut self, index: Girth) -> &mut Self::Output {
+        match index {
+            Girth::Tiny => &mut self[0],
+            Girth::Small => &mut self[1],
+            Girth::Normal => &mut self[2],
+            Girth::Large => &mut self[3],
+            Girth::Larger => &mut self[4],
+            Girth::Chungus => &mut self[5],
+        }
+    }
+}
+
+impl Default for Girth {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
 
 /// A line obtained from interpolating 2 points.
 #[derive(Debug, Clone)]
 pub struct Line {
-    points: Vec<Point2<f32>>,
+    pub points: Vec<Point2<f32>>,
+    pub girth: Girth,
 }
 
 impl Line {
     #[inline]
-    pub fn interpolate(origin: Point2<f32>, target: Point2<f32>) -> Self {
+    pub fn interpolate(origin: Point2<f32>, target: Point2<f32>, girth: Girth) -> Self {
         let mut points = vec![];
         let d_x = target.x - origin.x;
         let d_y = target.y - origin.y;
@@ -27,7 +129,32 @@ impl Line {
             i += 1.;
         }
 
-        Self { points }
+        Self { points, girth }
+    }
+
+    #[inline]
+    pub fn line_meshes_and_arrays(
+        ctx: &mut Context,
+        color: Color,
+    ) -> Result<([InstanceArray; 6], [Mesh; 6]), GameError> {
+        Ok((
+            [
+                InstanceArray::new(ctx, None),
+                InstanceArray::new(ctx, None),
+                InstanceArray::new(ctx, None),
+                InstanceArray::new(ctx, None),
+                InstanceArray::new(ctx, None),
+                InstanceArray::new(ctx, None),
+            ],
+            [
+                Curve::create_mesh(ctx, color, Girth::Tiny)?,
+                Curve::create_mesh(ctx, color, Girth::Small)?,
+                Curve::create_mesh(ctx, color, Girth::Normal)?,
+                Curve::create_mesh(ctx, color, Girth::Large)?,
+                Curve::create_mesh(ctx, color, Girth::Larger)?,
+                Curve::create_mesh(ctx, color, Girth::Chungus)?,
+            ],
+        ))
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, Point2<f32>> {
@@ -47,12 +174,12 @@ impl IntoIterator for Line {
 
 /// Pixels representing a square around a point.
 /// The first element is the point itself, the rest are points
-/// starting from the right (p.x + 1) going counter clockwise.
+/// starting from the right (p.x - distance, p.y - distance) going counter clockwise.
 #[derive(Debug, Clone, Copy)]
 pub struct BoundingBox([Point2<f32>; 9]);
 
 impl BoundingBox {
-    /// Returns a 'box' of rounded positions around the point with a distance of 1.
+    /// Returns a 'box' of rounded positions around the point.
     pub fn new(p: Point2<f32>, distance: f32) -> Self {
         // All points are clockwise (save the first) for
         // polygon drawing

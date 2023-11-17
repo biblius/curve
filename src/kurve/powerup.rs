@@ -1,8 +1,11 @@
-use std::time::{Duration, Instant};
+use std::{
+    fmt::Display,
+    time::{Duration, Instant},
+};
 
-use ggez::mint::Point2;
+use ggez::{mint::Point2, Context, GameResult};
 
-use super::curve::Curve;
+use super::{curve::Curve, point::Girth, POWERMOD_SIZE};
 
 /// Modifies the curve in some way
 #[derive(Debug)]
@@ -12,59 +15,32 @@ pub struct PowerMod {
 }
 
 impl PowerMod {
+    #[inline]
     pub fn new(point: Point2<f32>, ty: PowerModifier) -> Self {
         Self { point, ty }
     }
 
-    pub fn apply(&self, curve: &mut Curve) {
-        match self.ty {
-            PowerModifier::SpeedUp => curve.velocity += 10.,
-            PowerModifier::RotUp => curve.rotation_speed += 0.005,
-            PowerModifier::Invulnerability => {
-                curve.trail_active = false;
-                curve.trail_ts = Instant::now();
-                curve.trail_countdown = Duration::MAX;
-            }
-            PowerModifier::Anorexia => curve.girth -= 0.2,
-            PowerModifier::SpeedDown => curve.velocity -= 10.,
-            PowerModifier::RotDown => curve.rotation_speed -= 0.005,
-            // PowerModifier::RightAngle => todo!(),
-            PowerModifier::Chungus => curve.girth += 0.2,
-        }
+    #[inline]
+    pub fn bounds(&self) -> [f32; 4] {
+        [
+            self.point.x - POWERMOD_SIZE * 0.5,
+            self.point.x + POWERMOD_SIZE * 0.5,
+            self.point.y - POWERMOD_SIZE * 0.5,
+            self.point.y + POWERMOD_SIZE * 0.5,
+        ]
     }
 }
 
 /// Reverses any modification caused by a powerup
 #[derive(Debug)]
 pub struct PowerTimeout {
-    started: Instant,
-    ty: PowerModifier,
-}
-
-impl PowerTimeout {
-    pub fn apply(&self, curve: &mut Curve) {
-        match self.ty {
-            PowerModifier::SpeedUp => {
-                if curve.velocity > 10. {
-                    curve.velocity -= 10.
-                }
-            }
-            PowerModifier::RotUp => curve.rotation_speed -= 0.005,
-            PowerModifier::Invulnerability => {
-                curve.trail_active = true;
-                curve.trail_ts = Instant::now();
-                curve.trail_countdown = Curve::new_trail_countdown();
-            }
-            PowerModifier::Anorexia => curve.girth += 0.2,
-            PowerModifier::SpeedDown => curve.velocity += 10.,
-            PowerModifier::RotDown => curve.rotation_speed += 0.005,
-            // PowerModifier::RightAngle => todo!(),
-            PowerModifier::Chungus => curve.girth -= 0.2,
-        }
-    }
+    pub curve: usize,
+    pub started: Instant,
+    pub ty: PowerModifier,
 }
 
 /// All possible variations for a power up/down.
+#[repr(usize)]
 #[derive(Debug, Clone, Copy)]
 pub enum PowerModifier {
     // Good
@@ -91,4 +67,75 @@ pub enum PowerModifier {
     // RightAngle,
     /// Makes the curve fatter
     Chungus,
+}
+
+const ROTUP: f32 = 0.01;
+const VELO: f32 = 10.;
+
+impl PowerModifier {
+    pub fn apply(&self, _ctx: &mut Context, curve: &mut Curve) -> GameResult {
+        match self {
+            PowerModifier::SpeedUp => curve.velocity += VELO,
+            PowerModifier::RotUp => curve.rotation_speed += ROTUP,
+            PowerModifier::Invulnerability => {
+                curve.trail_active = false;
+                curve.trail_ts = Instant::now();
+                curve.trail_fuse = Duration::MAX;
+            }
+            PowerModifier::SpeedDown => curve.velocity -= VELO,
+            PowerModifier::RotDown => curve.rotation_speed -= ROTUP,
+            // PowerModifier::RightAngle => todo!(),
+            PowerModifier::Anorexia => {
+                if curve.girth > Girth::min() {
+                    curve.girth = curve.girth.decrement();
+                }
+            }
+            PowerModifier::Chungus => {
+                if curve.girth < Girth::max() {
+                    curve.girth = curve.girth.increment();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn remove(&self, _ctx: &mut Context, curve: &mut Curve) -> GameResult {
+        match self {
+            PowerModifier::SpeedUp => {
+                if curve.velocity > VELO {
+                    curve.velocity -= VELO
+                }
+            }
+            PowerModifier::RotUp => curve.rotation_speed -= ROTUP,
+            PowerModifier::Invulnerability => {
+                curve.trail_active = true;
+                curve.trail_ts = Instant::now();
+                curve.trail_fuse = Curve::new_trail_fuse();
+            }
+            PowerModifier::Anorexia => {
+                curve.girth = curve.girth.increment();
+            }
+            PowerModifier::SpeedDown => curve.velocity += VELO,
+            PowerModifier::RotDown => curve.rotation_speed += ROTUP,
+            // PowerModifier::RightAngle => todo!(),
+            PowerModifier::Chungus => {
+                curve.girth = curve.girth.decrement();
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Display for PowerModifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PowerModifier::SpeedUp => write!(f, "SpeedUp"),
+            PowerModifier::RotUp => write!(f, "RotUp"),
+            PowerModifier::Invulnerability => write!(f, "Invul"),
+            PowerModifier::Anorexia => write!(f, "Thin"),
+            PowerModifier::SpeedDown => write!(f, "SpeedDown"),
+            PowerModifier::RotDown => write!(f, "RotDown"),
+            PowerModifier::Chungus => write!(f, "Fat"),
+        }
+    }
 }
